@@ -1,0 +1,58 @@
+# StoryFlow - Python dependencies and environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# Environment variables (contains secrets)
+.env
+
+# Downloaded media (temporary)
+downloads/
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+*.mov
+*.webm
+
+# Cookie files (user data)
+cookies/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
