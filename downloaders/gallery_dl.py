@@ -36,6 +36,9 @@ class GalleryDLDownloader:
             Dict containing status and download information
         """
         try:
+            # Get list of files before download
+            files_before = self._get_download_files()
+            
             command = self._build_command(url, platform, user_id)
             
             logging.info(f"📥 Downloading {platform} content via gallery-dl...")
@@ -45,7 +48,25 @@ class GalleryDLDownloader:
             result = self._execute_with_retry(command)
             
             if result['success']:
-                logging.info(f"✅ {platform} content downloaded successfully!")
+                # Find new files
+                files_after = self._get_download_files()
+                new_files = [f for f in files_after if f not in files_before]
+                
+                if new_files:
+                    logging.info(f"✅ {platform} content downloaded successfully! ({len(new_files)} files)")
+                    result['files'] = new_files
+                else:
+                    # No new files - but gallery-dl succeeded, so content might be cached
+                    # Return all existing files in the download directory
+                    all_files = list(files_after)
+                    if all_files:
+                        logging.info(f"📂 Content already downloaded, returning {len(all_files)} cached file(s)")
+                        result['files'] = all_files
+                    else:
+                        logging.warning(f"⚠️ No files found in download directory")
+                        result['files'] = []
+                        result['message'] = "No content available"
+                    
                 return result
             else:
                 logging.error(f"❌ Download failed: {result.get('error')}")
@@ -60,6 +81,15 @@ class GalleryDLDownloader:
                 'platform': platform
             }
     
+    def _get_download_files(self) -> set:
+        """Get set of all files currently in download directory."""
+        files = set()
+        for root, dirs, filenames in os.walk(self.output_path):
+            for filename in filenames:
+                if not filename.startswith('.'):  # Skip hidden files
+                    files.add(os.path.join(root, filename))
+        return files
+    
     def _build_command(self, url: str, platform: str, user_id: Optional[str]) -> list:
         """Build gallery-dl command with appropriate options."""
         command = [
@@ -72,17 +102,32 @@ class GalleryDLDownloader:
         if platform == "Instagram" and user_id:
             cookie_file = os.path.join(self.cookie_path, f"instagram_{user_id}.txt")
             if os.path.exists(cookie_file):
-                logging.info(f"🍪 Using cookies for authentication")
+                logging.info(f"🍪 Using Instagram cookies for authentication")
                 command.extend(['--cookies', cookie_file])
             else:
-                logging.warning(f"⚠️ No cookie file found for user {user_id}")
+                logging.warning(f"⚠️ No Instagram cookie file found for user {user_id}")
         
         # Check for general Instagram cookies
         elif platform == "Instagram":
-            # Look for default Instagram cookies
             default_cookie = os.path.join(self.cookie_path, "instagram.txt")
             if os.path.exists(default_cookie):
                 logging.info("🍪 Using default Instagram cookies")
+                command.extend(['--cookies', default_cookie])
+        
+        # Add cookie support for Facebook
+        if platform == "Facebook" and user_id:
+            cookie_file = os.path.join(self.cookie_path, f"facebook_{user_id}.txt")
+            if os.path.exists(cookie_file):
+                logging.info(f"🍪 Using Facebook cookies for authentication")
+                command.extend(['--cookies', cookie_file])
+            else:
+                logging.warning(f"⚠️ No Facebook cookie file found for user {user_id}")
+        
+        # Check for general Facebook cookies
+        elif platform == "Facebook":
+            default_cookie = os.path.join(self.cookie_path, "facebook.txt")
+            if os.path.exists(default_cookie):
+                logging.info("🍪 Using default Facebook cookies")
                 command.extend(['--cookies', default_cookie])
         
         # Add URL as final argument
@@ -134,6 +179,16 @@ class GalleryDLDownloader:
                         'platform': 'gallery-dl'
                     }
                 
+                # Exit code 64 = extractor failure (common with Facebook, some TikTok)
+                if e.returncode == 64:
+                    return {
+                        'success': False,
+                        'error': 'Platform not supported or restricted',
+                        'details': 'This video may require login, be private, or from an unsupported format',
+                        'stderr': e.stderr,
+                        'platform': 'gallery-dl'
+                    }
+                
                 # Retry on network errors
                 if attempt < max_attempts and self._is_retryable_error(e.stderr):
                     wait_time = 2 ** attempt  # Exponential backoff
@@ -143,7 +198,7 @@ class GalleryDLDownloader:
                 
                 return {
                     'success': False,
-                    'error': f'gallery-dl failed (exit code {e.returncode})',
+                    'error': f'Download failed (code {e.returncode})',
                     'stderr': e.stderr,
                     'platform': 'gallery-dl'
                 }

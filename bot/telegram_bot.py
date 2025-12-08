@@ -16,6 +16,8 @@ from telegram.ext import (
 )
 
 from core.platform import identify_platform, extract_snapchat_username
+# Queue system available but not active
+# from core.queue import DownloadQueue, JobStatus, init_queue
 from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 from auth.cookies import CookieManager
@@ -27,6 +29,8 @@ import random
 snapchat: Optional[SnapchatDownloader] = None
 gallery_dl: Optional[GalleryDLDownloader] = None
 cookie_manager: Optional[CookieManager] = None
+# Queue not currently active
+# download_queue: Optional[DownloadQueue] = None
 
 # Fun greeting messages
 GREETINGS = [
@@ -45,75 +49,273 @@ PROCESSING_MSGS = [
 ]
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send welcome message with inline keyboard."""
-    # Create inline keyboard buttons
-    keyboard = [
-        [InlineKeyboardButton("❓ Help & Usage", callback_data="help")],
-        [InlineKeyboardButton("🍪 Upload Cookies", callback_data="upload_cookies")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "🌟 *Welcome to StoryFlow!*\n\n"
-        "Your personal media grabber is ready. 📦\n\n"
-        "Just send me a link from:\n"
+# ============= MAIN MENU & NAVIGATION =============
+
+def get_main_menu_keyboard():
+    """Get the main menu inline keyboard."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📖 How to Use", callback_data="menu_help")],
+        [InlineKeyboardButton("🍪 Manage Cookies", callback_data="menu_cookies")],
+        [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
+    ])
+
+
+def get_back_button(callback_data: str = "menu_main"):
+    """Get a back button."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=callback_data)]])
+
+
+async def send_main_menu(target, is_new_message: bool = False):
+    """Send the main menu."""
+    text = (
+        "🌟 *StoryFlow*\n\n"
+        "Hey! I'm your personal media grabber. 📦\n\n"
+        "Just paste a link and I'll download it:\n"
         "👻 Snapchat • 📸 Instagram • 🎵 TikTok\n"
-        "🐦 Twitter/X • 📘 Facebook",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
+        "🐦 Twitter/X • 📘 Facebook\n\n"
+        "_What would you like to do?_"
     )
+    keyboard = get_main_menu_keyboard()
+    
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send welcome message with main menu."""
+    await send_main_menu(update.message, is_new_message=True)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send help message (for /help command)."""
-    await send_help_message(update.message)
+    """Send help via command."""
+    await send_help_menu(update.message, is_new_message=True)
 
 
-async def send_help_message(message_or_query):
-    """Send help message content."""
-    help_text = (
-        "📖 *StoryFlow Guide*\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "👻 *Snapchat*\n"
-        "Send a profile link like:\n"
-        "`snapchat.com/add/username`\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "📸 *Instagram*\n"
-        "• Public posts/reels: Just send the link\n"
-        "• Private content: Upload cookies first\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🎵 *TikTok, Twitter, Facebook*\n"
-        "Just send the video URL!\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "💡 *Tip:* Public content = no cookies needed"
+async def send_help_menu(target, is_new_message: bool = False):
+    """Send the help/how-to-use menu."""
+    text = (
+        "📖 *How to Use StoryFlow*\n\n"
+        "1️⃣ Copy a link from any supported platform\n"
+        "2️⃣ Paste it here\n"
+        "3️⃣ I'll download and send it back!\n\n"
+        "_Tap a platform for specific tips:_"
     )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👻 Snapchat", callback_data="help_snapchat"),
+         InlineKeyboardButton("📸 Instagram", callback_data="help_instagram")],
+        [InlineKeyboardButton("🎵 TikTok", callback_data="help_tiktok"),
+         InlineKeyboardButton("📘 Facebook", callback_data="help_facebook")],
+        [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
+    ])
     
-    if hasattr(message_or_query, 'reply_text'):
-        await message_or_query.reply_text(help_text, parse_mode='Markdown')
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
     else:
-        await message_or_query.edit_message_text(help_text, parse_mode='Markdown')
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+
+async def send_cookies_menu(target, user_id: str):
+    """Send the cookie management menu."""
+    # Check existing cookies
+    cookies = cookie_manager.list_cookies(user_id) if cookie_manager else []
+    
+    if cookies:
+        lines = ["🍪 *Your Cookies*\n"]
+        for c in cookies:
+            emoji = "📸" if c['platform'] == 'instagram' else "📘"
+            status = "⚠️ Expired" if c.get('is_expired') else "✅ Active"
+            lines.append(f"{emoji} {c['platform'].title()}: {status}")
+            lines.append(f"   📅 {c.get('expiry_str', 'Unknown')}\n")
+        text = "\n".join(lines)
+    else:
+        text = (
+            "🍪 *Cookie Manager*\n\n"
+            "No cookies saved yet!\n\n"
+            "Cookies let you download content that requires login\n"
+            "(like Instagram stories or Facebook reels)."
+        )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 Add Instagram", callback_data="cookies_instagram"),
+         InlineKeyboardButton("📘 Add Facebook", callback_data="cookies_facebook")],
+        [InlineKeyboardButton("🗑️ Delete Cookies", callback_data="menu_delete_cookies")],
+        [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
+    ])
+    
+    await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline keyboard button callbacks."""
+    """Handle all inline keyboard button callbacks."""
     query = update.callback_query
-    await query.answer()  # Acknowledge the callback
+    await query.answer()
+    user_id = str(update.effective_user.id)
     
-    if query.data == "help":
-        await send_help_message(query)
-        
-    elif query.data == "upload_cookies":
-        context.user_data['awaiting_cookies'] = True
-        await query.edit_message_text(
-            "🍪 *Cookie Time!*\n\n"
-            "Send me your Instagram cookies.txt file and I'll remember it for you.\n\n"
-            "🔐 *Your cookies are private:*\n"
-            "• Only you can use them\n"
-            "• Delete anytime with /delete\\_cookies\n\n"
-            "_Waiting for your file..._",
-            parse_mode='Markdown'
+    # ============= MAIN NAVIGATION =============
+    
+    if query.data == "menu_main":
+        await send_main_menu(query, is_new_message=False)
+    
+    elif query.data == "menu_help":
+        await send_help_menu(query, is_new_message=False)
+    
+    elif query.data == "menu_cookies":
+        await send_cookies_menu(query, user_id)
+    
+    elif query.data == "menu_stats":
+        text = (
+            "📊 *Your Stats*\n\n"
+            "🚧 Coming soon!\n\n"
+            "Will show: downloads count, platforms used, etc."
         )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    # ============= PLATFORM HELP =============
+    
+    elif query.data == "help_snapchat":
+        text = (
+            "👻 *Snapchat Tips*\n\n"
+            "Send me a profile link like:\n"
+            "`snapchat.com/add/username`\n\n"
+            "I'll grab ALL their public stories!\n\n"
+            "💡 _No cookies needed for Snapchat_"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Help", callback_data="menu_help")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    elif query.data == "help_instagram":
+        text = (
+            "📸 *Instagram Tips*\n\n"
+            "• *Public posts/reels*: Just send the link\n"
+            "• *Stories/Private*: Need cookies first\n\n"
+            "Example links:\n"
+            "`instagram.com/p/ABC123`\n"
+            "`instagram.com/reel/XYZ789`\n\n"
+            "💡 _Use 'Manage Cookies' to add login cookies_"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🍪 Add Instagram Cookies", callback_data="cookies_instagram")],
+            [InlineKeyboardButton("⬅️ Back to Help", callback_data="menu_help")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    elif query.data == "help_tiktok":
+        text = (
+            "🎵 *TikTok Tips*\n\n"
+            "Just send a TikTok video link:\n"
+            "`tiktok.com/@user/video/123`\n\n"
+            "I'll download it without watermark!\n\n"
+            "💡 _No cookies needed for most videos_"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Help", callback_data="menu_help")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    elif query.data == "help_facebook":
+        text = (
+            "📘 *Facebook Tips*\n\n"
+            "• *Public videos*: Just send the link\n"
+            "• *Reels/Private*: Need cookies first\n\n"
+            "Example link:\n"
+            "`facebook.com/watch/?v=123`\n\n"
+            "💡 _Many Facebook videos require login cookies_"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🍪 Add Facebook Cookies", callback_data="cookies_facebook")],
+            [InlineKeyboardButton("⬅️ Back to Help", callback_data="menu_help")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    # ============= COOKIE MANAGEMENT =============
+    
+    elif query.data == "cookies_instagram":
+        context.user_data['awaiting_cookies'] = 'instagram'
+        text = (
+            "📸 *Upload Instagram Cookies*\n\n"
+            "Send me your `cookies.txt` file from Instagram.\n\n"
+            "*How to get it:*\n"
+            "1. Install 'Get cookies.txt' extension\n"
+            "2. Go to instagram.com (logged in)\n"
+            "3. Export cookies\n"
+            "4. Send the file here\n\n"
+            "_Waiting for your file..._"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    elif query.data == "cookies_facebook":
+        context.user_data['awaiting_cookies'] = 'facebook'
+        text = (
+            "📘 *Upload Facebook Cookies*\n\n"
+            "Send me your `cookies.txt` file from Facebook.\n\n"
+            "*How to get it:*\n"
+            "1. Install 'Get cookies.txt' extension\n"
+            "2. Go to facebook.com (logged in)\n"
+            "3. Export cookies\n"
+            "4. Send the file here\n\n"
+            "_Waiting for your file..._"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    elif query.data == "menu_delete_cookies":
+        text = (
+            "🗑️ *Delete Cookies*\n\n"
+            "Which cookies would you like to delete?"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📸 Instagram", callback_data="delete_instagram"),
+             InlineKeyboardButton("📘 Facebook", callback_data="delete_facebook")],
+            [InlineKeyboardButton("⚠️ Delete All", callback_data="delete_all")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
+    elif query.data == "delete_instagram":
+        deleted = cookie_manager.delete_cookie_file(user_id, "instagram")
+        text = "✅ Instagram cookies deleted!" if deleted else "🤷 No Instagram cookies found."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Cookies", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard)
+    
+    elif query.data == "delete_facebook":
+        deleted = cookie_manager.delete_cookie_file(user_id, "facebook")
+        text = "✅ Facebook cookies deleted!" if deleted else "🤷 No Facebook cookies found."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Cookies", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard)
+    
+    elif query.data == "delete_all":
+        ig = cookie_manager.delete_cookie_file(user_id, "instagram")
+        fb = cookie_manager.delete_cookie_file(user_id, "facebook")
+        text = "✅ All cookies deleted!" if (ig or fb) else "🤷 No cookies to delete."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Cookies", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard)
+    
+    # ============= LEGACY SUPPORT =============
+    
+    elif query.data == "help":
+        await send_help_menu(query, is_new_message=False)
+    
+    elif query.data == "upload_cookies":
+        await send_cookies_menu(query, user_id)
 
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -387,51 +589,55 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
 
 
 async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle cookie file upload command."""
-    context.user_data['awaiting_cookies'] = True
-    await update.message.reply_text(
-        "🍪 *Cookie Time!*\n\n"
-        "Send me your Instagram cookies.txt file and I'll remember it for you.\n\n"
-        "🔐 *Don't worry:*\n"
-        "• Your cookies are yours alone\n"
-        "• Nobody else can use them\n"
-        "• Delete anytime with /delete\\_cookies\n\n"
-        "_Waiting for your file..._",
-        parse_mode='Markdown'
-    )
+    """Handle /upload_cookies command - show cookie menu."""
+    user_id = str(update.effective_user.id)
+    cookies = cookie_manager.list_cookies(user_id) if cookie_manager else []
+    
+    if cookies:
+        lines = ["🍪 *Your Cookies*\n"]
+        for c in cookies:
+            emoji = "📸" if c['platform'] == 'instagram' else "📘"
+            status = "⚠️ Expired" if c.get('is_expired') else "✅ Active"
+            lines.append(f"{emoji} {c['platform'].title()}: {status}")
+            lines.append(f"   📅 {c.get('expiry_str', 'Unknown')}\n")
+        text = "\n".join(lines)
+    else:
+        text = (
+            "🍪 *Cookie Manager*\n\n"
+            "No cookies yet! Add some to unlock private content."
+        )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 Add Instagram", callback_data="cookies_instagram"),
+         InlineKeyboardButton("📘 Add Facebook", callback_data="cookies_facebook")],
+        [InlineKeyboardButton("🗑️ Delete Cookies", callback_data="menu_delete_cookies")],
+        [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
+    ])
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
 async def list_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List user's saved cookies."""
-    user_id = str(update.effective_user.id)
-    cookies = cookie_manager.list_cookies(user_id)
-    
-    if not cookies:
-        await update.message.reply_text(
-            "🍪 No cookies saved yet!\n\n"
-            "Use /upload\\_cookies to get started with Instagram.",
-            parse_mode='Markdown'
-        )
-    else:
-        platforms = [c['platform'].title() for c in cookies]
-        await update.message.reply_text(
-            f"🍪 *Your cookie jar:*\n\n"
-            f"✅ {', '.join(platforms)}\n\n"
-            f"You're all set for private content! 🎉",
-            parse_mode='Markdown'
-        )
+    """Alias for upload_cookies - shows cookie status."""
+    await upload_cookies(update, context)
 
 
 async def delete_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Delete user's cookies."""
-    user_id = str(update.effective_user.id)
-    
-    deleted = cookie_manager.delete_cookie_file(user_id, "instagram")
-    
-    if deleted:
-        await update.message.reply_text("🗑️ Cookies gone! Your data is cleared.")
-    else:
-        await update.message.reply_text("🤷 No cookies to delete — you're already clean!")
+    """Handle /delete_cookies command."""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 Instagram", callback_data="delete_instagram"),
+         InlineKeyboardButton("📘 Facebook", callback_data="delete_facebook")],
+        [InlineKeyboardButton("⚠️ Delete All", callback_data="delete_all")],
+        [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
+    ])
+    await update.message.reply_text(
+        "🗑️ *Delete Cookies*\n\nWhich cookies would you like to delete?",
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+
+
+# Queue status command available when queue is enabled
+# async def queue_status(update, context): ...
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -440,7 +646,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = str(update.effective_user.id)
     
     # Check if user was expecting to upload cookies
-    if not context.user_data.get('awaiting_cookies'):
+    awaiting_platform = context.user_data.get('awaiting_cookies')
+    if not awaiting_platform:
         await update.message.reply_text(
             "📎 Got a file, but I wasn't expecting one.\n"
             "Use /upload\\_cookies first if you want to upload cookies.",
@@ -451,28 +658,45 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Reset flag
     context.user_data['awaiting_cookies'] = False
     
+    # Handle legacy True value (default to instagram)
+    if awaiting_platform is True:
+        awaiting_platform = 'instagram'
+    
     if not document.file_name.endswith('.txt'):
         await update.message.reply_text("❌ Please send a .txt file (cookies.txt)")
         return
     
     # Download file
-    status_msg = await update.message.reply_text("⏳ Processing cookies...")
+    platform_emoji = "📸" if awaiting_platform == 'instagram' else "📘"
+    status_msg = await update.message.reply_text(f"⏳ Processing {awaiting_platform.title()} cookies...")
     
     try:
         file = await document.get_file()
         temp_path = f"/tmp/cookies_{user_id}.txt"
         await file.download_to_drive(temp_path)
         
-        # Save cookie file
-        result = cookie_manager.save_cookie_file(user_id, "instagram", temp_path)
+        # Save cookie file for the selected platform
+        result = cookie_manager.save_cookie_file(user_id, awaiting_platform, temp_path)
         
         if result['success']:
-            await status_msg.edit_text(
-                "✅ *Cookies saved successfully!*\n\n"
-                "You can now download private Instagram content.\n"
-                "Just send me an Instagram URL.",
-                parse_mode='Markdown'
-            )
+            platform_name = awaiting_platform.title()
+            expiry_str = result.get('expiry_str', 'Unknown')
+            is_expired = result.get('is_expired', False)
+            
+            if is_expired:
+                await status_msg.edit_text(
+                    f"⚠️ *{platform_name} Cookies Saved (But Expired!)*\n\n"
+                    f"These cookies expired on {expiry_str}.\n"
+                    f"Please export fresh cookies from your browser and upload again.",
+                    parse_mode='Markdown'
+                )
+            else:
+                await status_msg.edit_text(
+                    f"✅ *{platform_name} Cookies Saved!*\n\n"
+                    f"📅 Valid until: {expiry_str}\n\n"
+                    f"You can now download {platform_name} content that requires login.",
+                    parse_mode='Markdown'
+                )
         else:
             await status_msg.edit_text(
                 f"❌ Failed to save cookies: {result.get('error')}\n\n"
@@ -508,12 +732,16 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     # Create application
     app = Application.builder().token(token).build()
     
+    # Note: Queue system available but not auto-started to avoid event loop issues
+    # Can be enabled via: download_queue = await init_queue() in an async context
+    
     # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("upload_cookies", upload_cookies))
     app.add_handler(CommandHandler("my_cookies", list_cookies))
     app.add_handler(CommandHandler("delete_cookies", delete_cookies))
+    # Note: /queue command available but queue not auto-started
     
     # Callback handler for inline keyboard buttons
     app.add_handler(CallbackQueryHandler(button_callback))
