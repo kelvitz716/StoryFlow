@@ -22,6 +22,17 @@ from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 from auth.cookies import CookieManager
 
+# MTProto import (optional - for large files >50MB)
+try:
+    from auth.mtproto import MTProtoClient, get_mtproto_client, init_mtproto
+    MTPROTO_AVAILABLE = True
+except Exception as e:
+    logging.warning(f"MTProto not available: {e}")
+    MTProtoClient = None
+    get_mtproto_client = lambda: None
+    init_mtproto = None
+    MTPROTO_AVAILABLE = False
+
 
 import random
 
@@ -29,6 +40,8 @@ import random
 snapchat: Optional[SnapchatDownloader] = None
 gallery_dl: Optional[GalleryDLDownloader] = None
 cookie_manager: Optional[CookieManager] = None
+mtproto_client: Optional[MTProtoClient] = None
+
 # Queue not currently active
 # download_queue: Optional[DownloadQueue] = None
 
@@ -451,10 +464,26 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                 file_size = os.path.getsize(filepath)
                 file_ext = os.path.splitext(filepath)[1].lower()
                 
-                # 50MB limit for bot API
+                # 50MB limit for bot API - try MTProto for larger files
                 if file_size > 50 * 1024 * 1024:
-                    logging.warning(f"File too large (>50MB): {filepath}")
-                    failed_count += 1
+                    # Try MTProto for large files
+                    if mtproto_client and mtproto_client.is_connected:
+                        logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
+                        chat_id = update.effective_chat.id
+                        success = await mtproto_client.upload_file(chat_id, filepath, caption="")
+                        if success:
+                            uploaded_count += 1
+                            # Cleanup after successful upload
+                            try:
+                                os.remove(filepath)
+                                logging.debug(f"Cleaned up: {filepath}")
+                            except:
+                                pass
+                        else:
+                            failed_count += 1
+                    else:
+                        logging.warning(f"File too large (>50MB) and MTProto not available: {filepath}")
+                        failed_count += 1
                     continue
                 
                 if file_ext in photo_exts:
@@ -714,7 +743,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_url: str) -> None:
     """Run the Telegram bot."""
-    global snapchat, gallery_dl, cookie_manager
+    global snapchat, gallery_dl, cookie_manager, mtproto_client
     
     # Initialize components
     snapchat = SnapchatDownloader(
@@ -732,8 +761,19 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     # Create application
     app = Application.builder().token(token).build()
     
-    # Note: Queue system available but not auto-started to avoid event loop issues
-    # Can be enabled via: download_queue = await init_queue() in an async context
+    # Initialize MTProto client for large file uploads (optional)
+    if MTPROTO_AVAILABLE and init_mtproto:
+        async def post_init(application):
+            global mtproto_client
+            mtproto_client = await init_mtproto()
+            if mtproto_client and mtproto_client.is_connected:
+                logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
+            else:
+                logging.info("ℹ️ MTProto not configured - files >50MB will be skipped")
+        
+        app.post_init = post_init
+    else:
+        logging.info("ℹ️ MTProto not available - files >50MB will be skipped")
     
     # Add handlers
     app.add_handler(CommandHandler("start", start))

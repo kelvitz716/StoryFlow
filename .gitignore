@@ -25,6 +25,7 @@ venv/
 ENV/
 env/
 .venv/
+venv312/
 
 # Environment variables (contains secrets)
 .env
@@ -42,6 +43,7 @@ downloads/
 
 # Cookie files (user data)
 cookies/
+sessions/
 
 # IDE
 .idea/

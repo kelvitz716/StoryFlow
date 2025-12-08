@@ -69,6 +69,14 @@ class GalleryDLDownloader:
                     
                 return result
             else:
+                # gallery-dl failed - try yt-dlp as fallback for supported platforms
+                fallback_platforms = ["Facebook", "TikTok", "Twitter"]
+                if platform in fallback_platforms:
+                    logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
+                    fallback_result = self._download_with_ytdlp(url, platform, user_id, files_before)
+                    if fallback_result['success']:
+                        return fallback_result
+                
                 logging.error(f"❌ Download failed: {result.get('error')}")
                 return result
                 
@@ -89,6 +97,94 @@ class GalleryDLDownloader:
                 if not filename.startswith('.'):  # Skip hidden files
                     files.add(os.path.join(root, filename))
         return files
+    
+    def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], files_before: set) -> Dict:
+        """
+        Fallback download using yt-dlp for platforms where gallery-dl fails.
+        
+        Args:
+            url: Media URL
+            platform: Platform name
+            user_id: User ID for cookie lookup
+            files_before: Set of files before download
+            
+        Returns:
+            Dict with download result
+        """
+        try:
+            # Build yt-dlp command
+            output_template = os.path.join(self.output_path, f'{platform.lower()}', '%(id)s.%(ext)s')
+            command = [
+                'yt-dlp',
+                '-o', output_template,
+                '--no-warnings',
+                '--no-playlist',
+            ]
+            
+            # Add cookies if available
+            cookie_file = os.path.join(self.cookie_path, f"{platform.lower()}_{user_id}.txt") if user_id else None
+            if cookie_file and os.path.exists(cookie_file):
+                logging.info(f"🍪 Using {platform} cookies with yt-dlp")
+                command.extend(['--cookies', cookie_file])
+            
+            command.append(url)
+            
+            logging.info(f"📥 Downloading {platform} content via yt-dlp...")
+            
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            if result.returncode == 0:
+                # Find new files
+                files_after = self._get_download_files()
+                new_files = [f for f in files_after if f not in files_before]
+                
+                if new_files:
+                    logging.info(f"✅ {platform} content downloaded via yt-dlp! ({len(new_files)} files)")
+                    return {
+                        'success': True,
+                        'files': new_files,
+                        'platform': platform
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': 'No files downloaded',
+                        'platform': platform
+                    }
+            else:
+                logging.warning(f"⚠️ yt-dlp failed: {result.stderr[:200]}")
+                return {
+                    'success': False,
+                    'error': 'yt-dlp download failed',
+                    'stderr': result.stderr,
+                    'platform': platform
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': 'Download timeout',
+                'platform': platform
+            }
+        except FileNotFoundError:
+            logging.warning("⚠️ yt-dlp not installed, skipping fallback")
+            return {
+                'success': False,
+                'error': 'yt-dlp not installed',
+                'platform': platform
+            }
+        except Exception as e:
+            logging.error(f"yt-dlp error: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'platform': platform
+            }
     
     def _build_command(self, url: str, platform: str, user_id: Optional[str]) -> list:
         """Build gallery-dl command with appropriate options."""

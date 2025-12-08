@@ -76,8 +76,30 @@ StoryFlow/
 
 ## Requirements
 
-- Python 3.10+
+- **Python 3.12** (Recommended for best compatibility)
 - [gallery-dl](https://github.com/mikf/gallery-dl) (system-wide)
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) (for Facebook/TikTok fallback)
+
+## Large File Support (MTProto)
+
+To upload files >50MB (up to 2GB), configure Telegram MTProto:
+
+1. Get `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org)
+2. Add to `.env`:
+   ```bash
+   TELEGRAM_API_ID=your_api_id
+   TELEGRAM_API_HASH=your_api_hash
+   ```
+3. Run bot: `python storyflow.py` (First run requires one-time login via phone)
+
+## Features
+
+- **Interactive Menu**: Button-based navigation
+- **Cookie Management**: Upload/manage Instagram & Facebook cookies
+- **Smart Downloading**: Uses `gallery-dl` with `yt-dlp` fallback
+- **Large Files**: Uploads up to 2GB via MTProto with progress bar
+- **Auto-Cleanup**: Deletes files immediately after upload
+
 
 ## License
 
