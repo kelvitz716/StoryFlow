@@ -264,12 +264,17 @@ def get_queue() -> DownloadQueue:
     return download_queue
 
 
-async def init_queue(max_concurrent: int = 3, max_per_user: int = 2):
+async def init_queue(
+    max_concurrent: int = 3,
+    max_per_user: int = 2,
+    status_callback: Optional[Callable] = None
+):
     """Initialize and start the global download queue."""
     global download_queue
     download_queue = DownloadQueue(
         max_concurrent=max_concurrent,
-        max_per_user=max_per_user
+        max_per_user=max_per_user,
+        status_callback=status_callback
     )
     await download_queue.start()
     return download_queue

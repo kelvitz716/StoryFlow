@@ -16,11 +16,11 @@ from telegram.ext import (
 )
 
 from core.platform import identify_platform, extract_snapchat_username
-# Queue system available but not active
-# from core.queue import DownloadQueue, JobStatus, init_queue
+from core.queue import DownloadQueue, JobStatus, init_queue, get_queue
 from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 from auth.cookies import CookieManager
+from core.stats import stats_manager
 
 # MTProto import (optional - for large files >50MB)
 try:
@@ -42,24 +42,65 @@ gallery_dl: Optional[GalleryDLDownloader] = None
 cookie_manager: Optional[CookieManager] = None
 mtproto_client: Optional[MTProtoClient] = None
 
-# Queue not currently active
-# download_queue: Optional[DownloadQueue] = None
+# Queue instance
+download_queue: Optional[DownloadQueue] = None
 
 # Fun greeting messages
 GREETINGS = [
-    "Hey there! 👋",
-    "What's up! 🎉",
-    "Hello, friend! ✨",
-    "Yo! Ready to grab some stories? 🚀",
+    "Hey! Ready to download? 🚀",
+    "Send me a link and I'll do the rest! ✨",
+    "I'm listening... send a link! 🎧",
+    "Ready for your stories! 📸"
 ]
 
-# Fun processing messages
 PROCESSING_MSGS = [
-    "Hang tight! I'm on it 🔥",
-    "Let me work my magic ✨",
-    "Fetching that content for you 🚀",
-    "One sec, grabbing the goods 📦",
+    "🔍 Checking URL...",
+    "🧐 Analyzing link...",
+    "💾 Processing request...",
+    "⚡ One moment please..."
 ]
+
+# Map job_id -> status_message object for updates
+JOB_MESSAGES = {}
+
+async def queue_status_callback(job):
+    """Callback for queue status updates."""
+    status_msg = JOB_MESSAGES.get(job.job_id)
+    if not status_msg:
+        return
+
+    try:
+        platform_emoji = {"Instagram": "📸", "TikTok": "🎵", "Twitter": "🐦", "Facebook": "📘", "Snapchat": "👻"}
+        emoji = platform_emoji.get(job.platform, "📥")
+        
+        if job.status.value == "queued":
+            # Show queue position
+            pos = get_queue().get_queue_position(job.job_id)
+            await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\nWaiting for available worker...", parse_mode='Markdown')
+            
+        elif job.status.value == "downloading":
+            await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} Grabbing {job.platform} content", parse_mode='Markdown')
+            
+        elif job.status.value == "uploading":
+            # Batch upload handles its own status updates, but we set a generic one just in case
+            # await status_msg.edit_text(f"🚀 *Uploading...*\nPreparing to send files...", parse_mode='Markdown')
+            pass
+            
+        elif job.status.value == "completed":
+            # Increment stats
+            stats_manager.increment_download(job.user_id, job.platform)
+            
+            # Final cleanup
+            if job.job_id in JOB_MESSAGES:
+                del JOB_MESSAGES[job.job_id]
+                
+        elif job.status.value == "failed":
+            await status_msg.edit_text(f"❌ *Failed*\n{job.error}", parse_mode='Markdown')
+            if job.job_id in JOB_MESSAGES:
+                del JOB_MESSAGES[job.job_id]
+                
+    except Exception as e:
+        logging.error(f"Failed to update status message for job {job.job_id}: {e}")
 
 
 # ============= MAIN MENU & NAVIGATION =============
@@ -78,17 +119,20 @@ def get_back_button(callback_data: str = "menu_main"):
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data=callback_data)]])
 
 
-async def send_main_menu(target, is_new_message: bool = False):
-    """Send the main menu."""
+async def send_main_menu(target, is_new_message: bool = True):
+    """Send or edit the main menu."""
     text = (
-        "🌟 *StoryFlow*\n\n"
-        "Hey! I'm your personal media grabber. 📦\n\n"
-        "Just paste a link and I'll download it:\n"
+        "🎬 *StoryFlow Downloader*\n\n"
+        "I can download stories, reels, and videos from:\n"
         "👻 Snapchat • 📸 Instagram • 🎵 TikTok\n"
         "🐦 Twitter/X • 📘 Facebook\n\n"
-        "_What would you like to do?_"
+        "👇 *Tap a button to get started!*"
     )
-    keyboard = get_main_menu_keyboard()
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❓ Help & Usage", callback_data="menu_help")],
+        [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
+         InlineKeyboardButton("🍪 Manage Cookies", callback_data="menu_cookies")],
+    ])
     
     if is_new_message:
         await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
@@ -106,8 +150,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await send_help_menu(update.message, is_new_message=True)
 
 
-async def send_help_menu(target, is_new_message: bool = False):
-    """Send the help/how-to-use menu."""
+async def send_help_menu(target, is_new_message: bool = True):
+    """Send or edit the help menu."""
     text = (
         "📖 *How to Use StoryFlow*\n\n"
         "1️⃣ Copy a link from any supported platform\n"
@@ -179,10 +223,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_cookies_menu(query, user_id)
     
     elif query.data == "menu_stats":
+        stats = stats_manager.get_user_stats(user_id)
+        total = stats.get('total_downloads', 0)
+        platforms = stats.get('platforms', {})
+        
+        # Build platform breakdown
+        if platforms:
+            breakdown = "\n".join([f"• {p}: {c}" for p, c in platforms.items()])
+        else:
+            breakdown = "No downloads yet!"
+            
         text = (
-            "📊 *Your Stats*\n\n"
-            "🚧 Coming soon!\n\n"
-            "Will show: downloads count, platforms used, etc."
+            f"📊 *Your Statistics*\n\n"
+            f"📥 *Total Downloads:* {total}\n\n"
+            f"*Platform Breakdown:*\n{breakdown}"
         )
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
@@ -356,69 +410,48 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     proc_msg = random.choice(PROCESSING_MSGS)
     status_msg = await update.message.reply_text(f"{proc_msg}")
     
-    try:
-        # Download based on platform
-        if platform == "Snapchat":
-            username = extract_snapchat_username(url)
-            if not username:
-                await status_msg.edit_text(
-                    "🤔 Couldn't find a username in that link.\n"
-                    "Try: snapchat.com/add/username"
-                )
-                return
-            
-            await status_msg.edit_text(f"⬇️ *Downloading Stories...*\nFetching from @{username}", parse_mode='Markdown')
-            result = snapchat.download_stories(username)
-            
-        else:
-            # Instagram, TikTok, Twitter, Facebook
-            platform_emoji = {"Instagram": "📸", "TikTok": "🎵", "Twitter": "🐦", "Facebook": "📘"}
-            emoji = platform_emoji.get(platform, "📥")
-            await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} Grabbing {platform} content", parse_mode='Markdown')
-            result = gallery_dl.download(url, platform, user_id)
-        
-        # Handle result
-        if result.get('success'):
-            files = result.get('files', [])
-            
-            if not files:
-                # No files but success (e.g., no active stories)
-                message = result.get('message', 'No content found')
-                await status_msg.edit_text(f"😕 {message}")
-                return
-            
-            total_files = len(files)
-            
-            # Show download complete message before uploading
-            await status_msg.edit_text(
-                f"✅ *Downloaded {total_files} items!*\n"
-                f"Now sending to you...",
-                parse_mode='Markdown'
-            )
-            
-            # Batch upload files (Telegram limit: 10 per media group, 50MB per file)
-            await batch_upload_media(update, files, status_msg)
-            
-        else:
-            error_msg = result.get('error', 'Unknown error')
-            
-            if error_msg == 'Authentication required':
-                await status_msg.edit_text(
-                    "🔒 *Authentication required for Instagram*\n\n"
-                    "Please use /upload\\_cookies to upload your cookies.txt file.\n\n"
-                    "*How to get cookies:*\n"
-                    "1. Install 'Get cookies.txt' browser extension\n"
-                    "2. Visit Instagram and login\n"
-                    "3. Export cookies as cookies.txt\n"
-                    "4. Send the file here after /upload\\_cookies",
-                    parse_mode='Markdown'
-                )
+    # Define download function based on platform
+    async def download_func():
+        try:
+            if platform == "Snapchat":
+                username = extract_snapchat_username(url)
+                if not username:
+                    return {'success': False, 'error': 'Invalid Snapchat link'}
+                return snapchat.download_stories(username)
             else:
-                await status_msg.edit_text(f"❌ Failed: {error_msg}")
-                
-    except Exception as e:
-        logging.error(f"Error processing URL: {e}")
-        await status_msg.edit_text(f"⚠️ Error: {str(e)}")
+                # Instagram, TikTok, Twitter, Facebook
+                return await gallery_dl.download(url, platform, user_id)
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    # Define upload function
+    async def upload_func(files):
+        await batch_upload_media(update, files, status_msg)
+
+    # Submit to queue
+    if download_queue:
+        job = await download_queue.submit(
+            user_id=user_id,
+            url=url,
+            platform=platform,
+            download_func=download_func,
+            upload_func=upload_func
+        )
+        
+        if job:
+            # Track status message for updates
+            JOB_MESSAGES[job.job_id] = status_msg
+            
+            # Show queue position if queued
+            pos = download_queue.get_queue_position(job.job_id)
+            if pos > 0:
+                 await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\nWaiting for available worker...", parse_mode='Markdown')
+        else:
+            await status_msg.edit_text("⚠️ *Queue Full*\nYou have too many active downloads. Please wait for one to finish.")
+    else:
+        # Fallback if queue failed to init
+        await status_msg.edit_text("⚠️ System Error: Queue not active.")
+        logging.error("Download queue not initialized!")
 
 
 async def batch_upload_media(update: Update, files: list, status_msg) -> None:
@@ -761,19 +794,32 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     # Create application
     app = Application.builder().token(token).build()
     
-    # Initialize MTProto client for large file uploads (optional)
+    # Initialize MTProto client and Download Queue
     if MTPROTO_AVAILABLE and init_mtproto:
         async def post_init(application):
-            global mtproto_client
+            global mtproto_client, download_queue
+            
+            # Start MTProto
             mtproto_client = await init_mtproto()
             if mtproto_client and mtproto_client.is_connected:
                 logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
             else:
                 logging.info("ℹ️ MTProto not configured - files >50MB will be skipped")
+            
+            # Start Download Queue
+            logging.info("🚀 Starting download queue workers...")
+            download_queue = await init_queue(max_concurrent=3, status_callback=queue_status_callback)
         
         app.post_init = post_init
     else:
-        logging.info("ℹ️ MTProto not available - files >50MB will be skipped")
+        # Just init queue if MTProto failed
+        async def post_init(application):
+            global download_queue
+            logging.info("🚀 Starting download queue workers...")
+            download_queue = await init_queue(max_concurrent=3, status_callback=queue_status_callback)
+            logging.info("ℹ️ MTProto not available - files >50MB will be skipped")
+            
+        app.post_init = post_init
     
     # Add handlers
     app.add_handler(CommandHandler("start", start))
