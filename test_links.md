@@ -4,7 +4,7 @@
 | Username | URL |
 |----------|-----|
 | missmaddsxoxo | https://www.snapchat.com/add/missmaddsxoxo/l |
-| tajupiternoir | https://www.snapchat.com/add/tajupiternoir |
+| tajupiternoir | |
 | cnampeera1 | https://www.snapchat.com/add/cnampeera1 |
 | its-shukrah | https://www.snapchat.com/add/its-shukrah |
 | blessing611181 | https://www.snapchat.com/add/blessing611181/ |

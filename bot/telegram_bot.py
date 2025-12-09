@@ -3,6 +3,7 @@
 import os
 import logging
 import asyncio
+import time
 from typing import Optional
 
 from telegram import Update, Document, InlineKeyboardButton, InlineKeyboardMarkup
@@ -601,52 +602,36 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                     else:
                         await update.message.reply_document(f, caption=f"📁 {os.path.basename(filepath)}")
                     uploaded_count += 1
-                    
-                    # Cleanup: Delete file after successful upload
+                    await asyncio.sleep(1)  # Rate limit
+            except Exception as e:
+                logging.error(f"Error sending individual file {filepath}: {e}")
+                failed_count += 1
+            finally:
+                # Cleanup individual file
+                if os.path.exists(filepath):
                     try:
                         os.remove(filepath)
                         logging.debug(f"Cleaned up: {filepath}")
                     except Exception as e:
                         logging.warning(f"Failed to cleanup {filepath}: {e}")
-                    
-                    await asyncio.sleep(1)  # Rate limit
-            except Exception as e:
-                logging.error(f"Error sending individual file {filepath}: {e}")
-                failed_count += 1
         
         # Delay between batches to avoid flood control
         if batch_idx < len(batches) - 1:
             await asyncio.sleep(1)
     
-    # Delete status message and send completion message
-    try:
-        await status_msg.delete()
-    except:
-        pass
-    
-    # Send completion messages matching reference design
+    # Final Status Update
     if failed_count == 0:
-        # Delivery complete message
-        await update.message.reply_text(
-            f"✅ *Delivery Complete!*\n\n"
-            f"All {total_files} stories are here.",
-            parse_mode='Markdown'
-        )
-        
-        # Friendly closing message
-        await update.message.reply_text(
-            "Enjoy! ✨ Send another link whenever you're ready."
-        )
+        await status_msg.edit_text("✅ Delivery Complete!\nAll files sent successfully.")
+    elif uploaded_count > 0:
+        await status_msg.edit_text(f"✅ Delivery Complete!\nSent {uploaded_count} files.\n(Failed: {failed_count})")
     else:
-        await update.message.reply_text(
-            f"✅ *Delivery Complete!*\n\n"
-            f"Got {uploaded_count} of {total_files} files.\n"
-            f"⚠️ {failed_count} skipped (too large >50MB)",
-            parse_mode='Markdown'
-        )
+        await status_msg.edit_text("❌ Failed to send files.")
         
+    # Send friendly closing message
+    if failed_count == 0:
         await update.message.reply_text(
-            "Enjoy! ✨ Send another link whenever you're ready."
+            f"Enjoy! ✨ Send another link whenever you're ready.",
+            parse_mode='Markdown'
         )
 
 
@@ -774,6 +759,52 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await status_msg.edit_text(f"⚠️ Error: {str(e)}")
 
 
+async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Scheduled job to clean up old media files (older than 24h).
+    """
+    download_path = context.bot_data.get('download_path')
+    if not download_path:
+        logging.warning("🧹 Cleanup job skipped: download_path not set")
+        return
+        
+    logging.info("🧹 Starting daily cleanup...")
+    count = 0
+    cleaned_size = 0
+    
+    try:
+        current_time = time.time()
+        max_age = 86400  # 24 hours in seconds
+        
+        for root, dirs, files in os.walk(download_path):
+            for filename in files:
+                filepath = os.path.join(root, filename)
+                
+                # Check file age
+                try:
+                    file_stat = os.stat(filepath)
+                    file_age = current_time - file_stat.st_mtime
+                    
+                    if file_age > max_age:
+                        file_size = file_stat.st_size
+                        os.remove(filepath)
+                        count += 1
+                        cleaned_size += file_size
+                        logging.debug(f"Deleted old file: {filename}")
+                        
+                except Exception as e:
+                    logging.warning(f"Failed to check/delete {filename}: {e}")
+                    
+        if count > 0:
+            size_mb = cleaned_size / (1024 * 1024)
+            logging.info(f"✨ Cleanup complete: Removed {count} files ({size_mb:.2f} MB)")
+        else:
+            logging.info("✨ Cleanup complete: No old files found")
+            
+    except Exception as e:
+        logging.error(f"❌ Cleanup job failed: {e}")
+
+
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_url: str) -> None:
     """Run the Telegram bot."""
     global snapchat, gallery_dl, cookie_manager, mtproto_client
@@ -791,8 +822,8 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     
     cookie_manager = CookieManager(cookie_path=cookie_path)
     
-    # Create application
-    app = Application.builder().token(token).build()
+    # Create application with increased timeouts for slow connections
+    app = Application.builder().token(token).read_timeout(120).write_timeout(120).build()
     
     # Initialize MTProto client and Download Queue
     if MTPROTO_AVAILABLE and init_mtproto:
@@ -820,6 +851,16 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
             logging.info("ℹ️ MTProto not available - files >50MB will be skipped")
             
         app.post_init = post_init
+    
+    # Store download path for cleanup job
+    app.bot_data['download_path'] = download_path
+    
+    # Schedule cleanup job (every 24h)
+    if app.job_queue:
+        app.job_queue.run_repeating(cleanup_job, interval=86400, first=10)
+        logging.info("🧹 Cleanup job scheduled (every 24h)")
+    else:
+        logging.warning("⚠️ JobQueue not available - cleanup job disabled")
     
     # Add handlers
     app.add_handler(CommandHandler("start", start))
