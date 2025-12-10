@@ -415,6 +415,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     async def download_func():
         try:
             if platform == "Snapchat":
+                # Check if it's a Spotlight link (public video)
+                if "/spotlight/" in url:
+                    logging.info("🔦 Detected Snapchat Spotlight link, using gallery-dl...")
+                    return await gallery_dl.download(url, platform, user_id)
+                
+                # Otherwise treat as User Stories
                 username = extract_snapchat_username(url)
                 if not username:
                     return {'success': False, 'error': 'Invalid Snapchat link'}

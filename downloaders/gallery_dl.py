@@ -69,12 +69,27 @@ class GalleryDLDownloader:
                     
                 return result
             else:
+                # Check for partial success (files downloaded despite error)
+                files_after = self._get_download_files()
+                new_files = [f for f in files_after if f not in files_before]
+                
+                if new_files:
+                    logging.warning(f"⚠️ {platform} content returned error but files were downloaded ({len(new_files)} files). Treating as partial success.")
+                    result['success'] = True
+                    result['files'] = new_files
+                    result['message'] = "Partial download completed (some errors occurred)"
+                    return result
+                    
                 # gallery-dl failed - try yt-dlp as fallback for supported platforms
-                fallback_platforms = ["Facebook", "TikTok", "Twitter"]
+                fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat"]
                 if platform in fallback_platforms:
                     logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
                     fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before)
                     if fallback_result['success']:
+                        return fallback_result
+                    else:
+                        # Return fallback error if we tried it
+                        logging.warning(f"⚠️ Fallback failed: {fallback_result.get('error')}")
                         return fallback_result
                 
                 logging.error(f"❌ Download failed: {result.get('error')}")
@@ -153,9 +168,26 @@ class GalleryDLDownloader:
                         'platform': platform
                     }
                 else:
+                    # If yt-dlp succeeded but no *new* files, content might be cached/already downloaded
+                    # Return all appropriate files from the platform directory
+                    platform_dir = os.path.join(self.output_path, platform.lower())
+                    if os.path.exists(platform_dir) and os.listdir(platform_dir):
+                        all_files = [
+                            os.path.join(root, f) 
+                            for root, _, files in os.walk(platform_dir) 
+                            for f in files if not f.startswith('.')
+                        ]
+                        if all_files:
+                            logging.info(f"📂 Content already downloded (cached), returning {len(all_files)} file(s)")
+                            return {
+                                'success': True,
+                                'files': all_files,
+                                'platform': platform
+                            }
+                            
                     return {
                         'success': False,
-                        'error': 'No files downloaded',
+                        'error': 'No files downloaded (and no cache found)',
                         'platform': platform
                     }
             else:
