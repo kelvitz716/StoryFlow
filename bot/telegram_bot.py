@@ -158,6 +158,11 @@ async def send_help_menu(target, is_new_message: bool = True):
         "1️⃣ Copy a link from any supported platform\n"
         "2️⃣ Paste it here\n"
         "3️⃣ I'll download and send it back!\n\n"
+        "*Available Commands:*\n"
+        "• /start - Main menu\n"
+        "• /help - Usage guide\n"
+        "• /my\_cookies - Manage login cookies\n"
+        "• /purge - ⚠️ Delete all downloaded files (Maintenance)\n\n"
         "_Tap a platform for specific tips:_"
     )
     keyboard = InlineKeyboardMarkup([
@@ -165,6 +170,8 @@ async def send_help_menu(target, is_new_message: bool = True):
          InlineKeyboardButton("📸 Instagram", callback_data="help_instagram")],
         [InlineKeyboardButton("🎵 TikTok", callback_data="help_tiktok"),
          InlineKeyboardButton("📘 Facebook", callback_data="help_facebook")],
+        [InlineKeyboardButton("🐦 Twitter/X", callback_data="help_twitter"),
+         InlineKeyboardButton("⚠️ Purge System", callback_data="menu_purge_confirm")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
     
@@ -302,6 +309,51 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton("⬅️ Back to Help", callback_data="menu_help")],
         ])
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif query.data == "help_twitter":
+        text = (
+            "🐦 *Twitter/X Tips*\n\n"
+            "Send me a tweet link:\n"
+            "`x.com/user/status/123...`\n"
+            "`twitter.com/user/status/123...`\n\n"
+            "I'll download the video or images!\n\n"
+            "💡 _No cookies needed usually_"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Help", callback_data="menu_help")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+    # ============= SYSTEM ACTIONS =============
+
+    elif query.data == "menu_purge_confirm":
+        text = (
+            "⚠️ *System Purge - Warning*\n\n"
+            "This will delete ALL downloaded files from the server.\n"
+            "This is useful if storage is full or downloads are stuck.\n\n"
+            "*Are you sure?*"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑️ Yes, Purge Everything", callback_data="menu_purge_execute")],
+            [InlineKeyboardButton("⬅️ No, Go Back", callback_data="menu_help")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif query.data == "menu_purge_execute":
+        await query.edit_message_text("🧹 Starting full system purge...")
+        user_id = query.from_user.id
+        
+        # Trigger same logic as /purge command
+        if context.job_queue:
+            context.job_queue.run_once(
+                cleanup_job, 
+                when=0,
+                data={'force': True, 'chat_id': query.message.chat_id},
+                name=f"purge_{user_id}"
+            )
+        else:
+             await query.message.reply_text("⚠️ System Error: Job Queue not active. Cannot schedule purge.")
+             logging.error("JobQueue not available to schedule purge")
     
     # ============= COOKIE MANAGEMENT =============
     
@@ -788,7 +840,9 @@ async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     download_path = context.bot_data.get('download_path')
     # Check if triggered manually via command
-    force = context.job.data.get('force', False) if context.job else False
+    force = False
+    if context.job and context.job.data:
+        force = context.job.data.get('force', False)
     
     if not download_path:
         logging.warning("🧹 Cleanup job skipped: download_path not set")
@@ -827,17 +881,18 @@ async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             msg = f"✨ Cleanup complete: Removed {count} files ({size_mb:.2f} MB)"
             logging.info(msg)
             # If triggered manually, try to reply
-            if context.job and context.job.data.get('chat_id'):
+            # If triggered manually, try to reply
+            if context.job and context.job.data and context.job.data.get('chat_id'):
                 await context.bot.send_message(chat_id=context.job.data['chat_id'], text=msg)
         else:
             msg = "✨ Cleanup complete: No files found to remove"
             logging.info(msg)
-            if context.job and context.job.data.get('chat_id'):
+            if context.job and context.job.data and context.job.data.get('chat_id'):
                 await context.bot.send_message(chat_id=context.job.data['chat_id'], text=msg)
             
     except Exception as e:
         logging.error(f"❌ Cleanup job failed: {e}")
-        if context.job and context.job.data.get('chat_id'):
+        if context.job and context.job.data and context.job.data.get('chat_id'):
             await context.bot.send_message(chat_id=context.job.data['chat_id'], text=f"❌ Cleanup failed: {e}")
 
 
@@ -849,12 +904,21 @@ async def purge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     msg = await update.message.reply_text("🧹 Starting full system purge...")
     
     # Schedule the cleanup job immediately with force=True
-    context.job_queue.run_once(
-        cleanup_job, 
-        when=0,
-        data={'force': True, 'chat_id': update.effective_chat.id},
-        name=f"purge_{user_id}"
-    )
+    if context.job_queue:
+        context.job_queue.run_once(
+            cleanup_job, 
+            when=0,
+            data={'force': True, 'chat_id': update.effective_chat.id},
+            name=f"purge_{user_id}"
+        )
+    else:
+        # Fallback if no job queue - run synchronously (might block briefly, but safer than crashing)
+        # Note: cleanup_job requires a context with .job.data usually, so we mock it or call logic directly
+        # For simplicity, we'll try to just call the core logic if possible, 
+        # but cleanup_job relies on context.job structure. 
+        # Better to warn user.
+        await update.message.reply_text("⚠️ System Error: Job Queue not active. Cannot schedule purge.")
+        logging.error("JobQueue not available to schedule purge")
 
 
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_url: str) -> None:
