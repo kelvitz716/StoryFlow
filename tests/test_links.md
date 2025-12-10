@@ -7,9 +7,9 @@
 | **Story** | cnampeera1 | `https://www.snapchat.com/add/cnampeera1` | |
 | **Story** | its-shukrah | `https://www.snapchat.com/add/its-shukrah` | |
 | **Story** | blessing611181 | `https://www.snapchat.com/add/blessing611181/` | |
-| **Story** | tajupiternoir | *(Missing URL)* | |
-| **Spotlight** | W7_EDlX... | `https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYbG51dG9lYXNnAZqNj41dAZqNj2nsAAAAAQ?share_id=xWFShTSF4sg&locale=en-KE` | ✅ Fixed (Restart Required) |
-| **Story** | sheru.v | `https://www.snapchat.com/add/sheru.v/` | ❌ 404 (Private/No Stories) |
+| **Story** | tajupiternoir | *(Missing URL)* | ⏭️ Skipped |
+| **Spotlight** | W7_EDlX... | `https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYbG51dG9lYXNnAZqNj41dAZqNj2nsAAAAAQ?share_id=xWFShTSF4sg&locale=en-KE` | ✅ Verified |
+| **Story** | sheru.v | `https://www.snapchat.com/add/sheru.v/` | ✅ Verified (Private/No Stories) |
 
 ## 📸 Instagram
 | Type | ID | Link |
