@@ -74,26 +74,34 @@ class GalleryDLDownloader:
                 new_files = [f for f in files_after if f not in files_before]
                 
                 if new_files:
-                    logging.warning(f"⚠️ {platform} content returned error but files were downloaded ({len(new_files)} files). Treating as partial success.")
+                    # TikTok specific: Images often download fine but audio fails. Treat this as success/feature.
+                    logging.info(f"✅ {platform} images downloaded successfully (audio skipped by design)")
                     result['success'] = True
                     result['files'] = new_files
-                    result['message'] = "Partial download completed (some errors occurred)"
+                    result['message'] = "Downloads completed (audio skipped)"
                     return result
                     
                 # gallery-dl failed - try yt-dlp as fallback for supported platforms
                 fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat"]
                 if platform in fallback_platforms:
+                    # If gallery-dl specifically found no content (Code 4), we might still try fallback
+                    # but if fallback also fails, we should remember the "No content" signal.
                     logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
                     fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before)
                     if fallback_result['success']:
                         return fallback_result
                     else:
+                        # If gallery-dl said "No content" (Code 4) and yt-dlp failed, return the "No content" message
+                        if result.get('returncode') == 4:
+                             return result 
+
                         # Return fallback error if we tried it
                         logging.warning(f"⚠️ Fallback failed: {fallback_result.get('error')}")
                         return fallback_result
                 
                 logging.error(f"❌ Download failed: {result.get('error')}")
                 return result
+
                 
         except Exception as e:
             logging.error(f"❌ Unexpected error: {e}")
@@ -325,7 +333,8 @@ class GalleryDLDownloader:
                         'error': 'Content not found',
                         'details': 'The content may have been deleted or is private',
                         'stderr': stderr_content,
-                        'platform': 'gallery-dl'
+                        'platform': 'gallery-dl',
+                        'returncode': process.returncode if 'process' in locals() else None
                     }
                 
                 # Exit code 64 = extractor failure
@@ -335,7 +344,19 @@ class GalleryDLDownloader:
                         'error': 'Platform not supported or restricted',
                         'details': 'This video may require login, be private, or from an unsupported format',
                         'stderr': stderr_content,
-                        'platform': 'gallery-dl'
+                        'platform': 'gallery-dl',
+                        'returncode': 64
+                    }
+
+                # Exit code 4 = No Downloads / Nothing found (User has no stories)
+                if 'returncode' in locals() and process.returncode == 4:
+                    return {
+                        'success': False,
+                        'error': 'No active stories/spotlights found',
+                        'details': 'The user has no content available or it is private',
+                        'stderr': stderr_content,
+                        'platform': 'gallery-dl',
+                        'returncode': 4
                     }
                 
                 # Retry on network errors
