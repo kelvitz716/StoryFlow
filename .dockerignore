@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+venv312/
+.env
+.DS_Store
+downloads/
+sessions/
+cookies/*.txt
+!cookies/.keep

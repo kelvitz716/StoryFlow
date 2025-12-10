@@ -640,6 +640,22 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
             parse_mode='Markdown'
         )
 
+    # RESILIENT CLEANUP: Ensure ALL files in the original list are removed
+    # This covers files that might have failed preparation or upload
+    logging.info(f"🧹 Performing post-upload cleanup for {len(files)} files...")
+    cleaned_count = 0
+    for filepath in files:
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                cleaned_count += 1
+                logging.debug(f"Cleaned up (resilient): {filepath}")
+        except Exception as e:
+            logging.warning(f"Failed to cleanup {filepath}: {e}")
+            
+    if cleaned_count > 0:
+        logging.info(f"✨ Cleanup verified: {cleaned_count}/{len(files)} files removed.")
+
 
 async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /upload_cookies command - show cookie menu."""
@@ -768,13 +784,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Scheduled job to clean up old media files (older than 24h).
+    Can also be triggered manually with force=True to delete ALL files.
     """
     download_path = context.bot_data.get('download_path')
+    # Check if triggered manually via command
+    force = context.job.data.get('force', False) if context.job else False
+    
     if not download_path:
         logging.warning("🧹 Cleanup job skipped: download_path not set")
         return
         
-    logging.info("🧹 Starting daily cleanup...")
+    logging.info(f"🧹 Starting {'FORCED ' if force else ''}cleanup...")
     count = 0
     cleaned_size = 0
     
@@ -791,24 +811,50 @@ async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     file_stat = os.stat(filepath)
                     file_age = current_time - file_stat.st_mtime
                     
-                    if file_age > max_age:
+                    # Delete if forced OR if older than max_age
+                    if force or file_age > max_age:
                         file_size = file_stat.st_size
                         os.remove(filepath)
                         count += 1
                         cleaned_size += file_size
-                        logging.debug(f"Deleted old file: {filename}")
+                        logging.debug(f"Deleted {'forced' if force else 'old'} file: {filename}")
                         
                 except Exception as e:
                     logging.warning(f"Failed to check/delete {filename}: {e}")
                     
         if count > 0:
             size_mb = cleaned_size / (1024 * 1024)
-            logging.info(f"✨ Cleanup complete: Removed {count} files ({size_mb:.2f} MB)")
+            msg = f"✨ Cleanup complete: Removed {count} files ({size_mb:.2f} MB)"
+            logging.info(msg)
+            # If triggered manually, try to reply
+            if context.job and context.job.data.get('chat_id'):
+                await context.bot.send_message(chat_id=context.job.data['chat_id'], text=msg)
         else:
-            logging.info("✨ Cleanup complete: No old files found")
+            msg = "✨ Cleanup complete: No files found to remove"
+            logging.info(msg)
+            if context.job and context.job.data.get('chat_id'):
+                await context.bot.send_message(chat_id=context.job.data['chat_id'], text=msg)
             
     except Exception as e:
         logging.error(f"❌ Cleanup job failed: {e}")
+        if context.job and context.job.data.get('chat_id'):
+            await context.bot.send_message(chat_id=context.job.data['chat_id'], text=f"❌ Cleanup failed: {e}")
+
+
+async def purge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /purge command to delete all downloaded files."""
+    user_id = update.effective_user.id
+    # Optional: Check for admin ID if needed, but for personal bot it's fine
+    
+    msg = await update.message.reply_text("🧹 Starting full system purge...")
+    
+    # Schedule the cleanup job immediately with force=True
+    context.job_queue.run_once(
+        cleanup_job, 
+        when=0,
+        data={'force': True, 'chat_id': update.effective_chat.id},
+        name=f"purge_{user_id}"
+    )
 
 
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_url: str) -> None:
@@ -873,7 +919,10 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("upload_cookies", upload_cookies))
     app.add_handler(CommandHandler("my_cookies", list_cookies))
+    app.add_handler(CommandHandler("upload_cookies", upload_cookies))
+    app.add_handler(CommandHandler("my_cookies", list_cookies))
     app.add_handler(CommandHandler("delete_cookies", delete_cookies))
+    app.add_handler(CommandHandler("purge", purge_command))
     # Note: /queue command available but queue not auto-started
     
     # Callback handler for inline keyboard buttons
