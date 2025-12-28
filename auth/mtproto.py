@@ -5,13 +5,23 @@ import logging
 import asyncio
 from typing import Optional
 
-try:
-    from pyrogram import Client
-    from pyrogram.errors import SessionPasswordNeeded
-    PYROGRAM_AVAILABLE = True
-except ImportError:
-    PYROGRAM_AVAILABLE = False
-    Client = None
+# Lazily loaded imports
+PYROGRAM_AVAILABLE = None
+Client = None
+
+def _ensure_pyrogram():
+    """Import pyrogram only when needed to avoid early event loop errors."""
+    global PYROGRAM_AVAILABLE, Client
+    if PYROGRAM_AVAILABLE is not None:
+        return PYROGRAM_AVAILABLE
+    
+    try:
+        from pyrogram import Client as PClient
+        Client = PClient
+        PYROGRAM_AVAILABLE = True
+    except ImportError:
+        PYROGRAM_AVAILABLE = False
+    return PYROGRAM_AVAILABLE
 
 
 class MTProtoClient:
@@ -47,7 +57,7 @@ class MTProtoClient:
     @property
     def is_configured(self) -> bool:
         """Check if MTProto credentials are configured."""
-        return bool(self.api_id and self.api_hash and PYROGRAM_AVAILABLE)
+        return bool(self.api_id and self.api_hash and _ensure_pyrogram())
     
     @property
     def is_connected(self) -> bool:
@@ -61,7 +71,7 @@ class MTProtoClient:
         Returns:
             True if started successfully, False otherwise
         """
-        if not PYROGRAM_AVAILABLE:
+        if not _ensure_pyrogram():
             logging.warning("⚠️ Pyrogram not installed. Run: pip install pyrogram")
             return False
         
@@ -80,6 +90,10 @@ class MTProtoClient:
             
             await self.client.start()
             self._is_connected = True
+            
+            # Security: Restrict session file permissions to owner only
+            if os.path.exists(session_file + ".session"):
+                os.chmod(session_file + ".session", 0o600)
             
             me = await self.client.get_me()
             logging.info(f"✅ MTProto connected as {me.first_name} (@{me.username})")

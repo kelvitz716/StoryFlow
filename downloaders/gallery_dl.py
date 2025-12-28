@@ -4,7 +4,7 @@ import os
 import time
 import asyncio
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
 
 
 class GalleryDLDownloader:
@@ -23,7 +23,7 @@ class GalleryDLDownloader:
         os.makedirs(output_path, exist_ok=True)
         os.makedirs(cookie_path, exist_ok=True)
     
-    async def download(self, url: str, platform: str, user_id: Optional[str] = None) -> Dict:
+    async def download(self, url: str, platform: str, user_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Download media using gallery-dl with optional cookie support (Async).
         
@@ -45,7 +45,7 @@ class GalleryDLDownloader:
             logging.debug(f"Command: {' '.join(command)}")
             
             # Execute gallery-dl with retry logic (Async)
-            result = await self._execute_with_retry(command)
+            result = await self._execute_with_retry(command, progress_callback=progress_callback)
             
             if result['success']:
                 # Find new files
@@ -55,52 +55,44 @@ class GalleryDLDownloader:
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded successfully! ({len(new_files)} files)")
                     result['files'] = new_files
-                else:
-                    # No new files - but gallery-dl succeeded, so content might be cached
-                    # Return all existing files in the download directory
-                    all_files = list(files_after)
-                    if all_files:
-                        logging.info(f"📂 Content already downloaded, returning {len(all_files)} cached file(s)")
-                        result['files'] = all_files
-                    else:
-                        logging.warning(f"⚠️ No files found in download directory")
-                        result['files'] = []
-                        result['message'] = "No content available"
-                    
-                return result
-            else:
-                # Check for partial success (files downloaded despite error)
-                files_after = self._get_download_files()
-                new_files = [f for f in files_after if f not in files_before]
-                
-                if new_files:
-                    # TikTok specific: Images often download fine but audio fails. Treat this as success/feature.
-                    logging.info(f"✅ {platform} images downloaded successfully (audio skipped by design)")
-                    result['success'] = True
-                    result['files'] = new_files
-                    result['message'] = "Downloads completed (audio skipped)"
                     return result
-                    
-                # gallery-dl failed - try yt-dlp as fallback for supported platforms
-                fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat"]
-                if platform in fallback_platforms:
-                    # If gallery-dl specifically found no content (Code 4), we might still try fallback
-                    # but if fallback also fails, we should remember the "No content" signal.
-                    logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                    fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before)
-                    if fallback_result['success']:
-                        return fallback_result
-                    else:
-                        # If gallery-dl said "No content" (Code 4) and yt-dlp failed, return the "No content" message
-                        if result.get('returncode') == 4:
-                             return result 
-
-                        # Return fallback error if we tried it
-                        logging.warning(f"⚠️ Fallback failed: {fallback_result.get('error')}")
-                        return fallback_result
                 
-                logging.error(f"❌ Download failed: {result.get('error')}")
+                # Check for cached files (if any were already in the folder)
+                all_files = list(files_after)
+                if all_files:
+                    logging.info(f"📂 Content already downloaded, returning {len(all_files)} cached file(s)")
+                    result['files'] = all_files
+                    return result
+                
+                logging.warning(f"⚠️ No files found after gallery-dl success.")
+            
+            # If we are here, it's either result['success'] is False OR it's True but no files were found.
+            # Check for partial success (files downloaded despite error)
+            files_after = self._get_download_files()
+            new_files = [f for f in files_after if f not in files_before]
+            
+            if new_files:
+                # TikTok specific: Images often download fine but audio fails. Treat this as success/feature.
+                logging.info(f"✅ {platform} images downloaded successfully (despite stderr)")
+                result['success'] = True
+                result['files'] = new_files
+                result['message'] = "Downloads completed (with some errors)"
                 return result
+                
+            # Try yt-dlp as fallback for supported platforms
+            fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram"]
+            if platform in fallback_platforms:
+                logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
+                fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before)
+                if fallback_result and fallback_result['success']:
+                    return fallback_result
+                elif fallback_result:
+                    # Return fallback error if we tried it
+                    logging.warning(f"⚠️ Fallback failed: {fallback_result.get('error')}")
+                    return fallback_result
+            
+            logging.error(f"❌ Download failed: {result.get('error') if result else 'Unknown error'}")
+            return result or {'success': False, 'error': 'Unknown failure', 'platform': platform}
 
                 
         except Exception as e:
@@ -121,7 +113,7 @@ class GalleryDLDownloader:
                     files.add(os.path.join(root, filename))
         return files
     
-    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], files_before: set) -> Dict:
+    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).
         
@@ -152,18 +144,14 @@ class GalleryDLDownloader:
             
             command.append(url)
             
+            # Run yt-dlp asynchronously using the shared execution method
+            # This handles streaming output and progress parsing
             logging.info(f"📥 Downloading {platform} content via yt-dlp...")
             
-            # Run yt-dlp asynchronously
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            # Re-use _execute_with_retry since it now supports streaming and progress
+            result = await self._execute_with_retry(command, progress_callback=progress_callback)
             
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode == 0:
+            if result['success']:
                 # Find new files
                 files_after = self._get_download_files()
                 new_files = [f for f in files_after if f not in files_before]
@@ -177,34 +165,16 @@ class GalleryDLDownloader:
                     }
                 else:
                     # If yt-dlp succeeded but no *new* files, content might be cached/already downloaded
-                    # Return all appropriate files from the platform directory
-                    platform_dir = os.path.join(self.output_path, platform.lower())
-                    if os.path.exists(platform_dir) and os.listdir(platform_dir):
-                        all_files = [
-                            os.path.join(root, f) 
-                            for root, _, files in os.walk(platform_dir) 
-                            for f in files if not f.startswith('.')
-                        ]
-                        if all_files:
-                            logging.info(f"📂 Content already downloded (cached), returning {len(all_files)} file(s)")
-                            return {
-                                'success': True,
-                                'files': all_files,
-                                'platform': platform
-                            }
-                            
                     return {
-                        'success': False,
-                        'error': 'No files downloaded (and no cache found)',
+                        'success': True,
+                        'files': [], # Caller handles empty file check if needed, or we check existing
+                        'message': "No new files found",
                         'platform': platform
                     }
             else:
-                stderr_text = stderr.decode().strip()
-                logging.warning(f"⚠️ yt-dlp failed: {stderr_text[:200]}")
-                return {
+                 return {
                     'success': False,
-                    'error': 'yt-dlp download failed',
-                    'stderr': stderr_text,
+                    'error': result.get('stderr', 'yt-dlp download failed'),
                     'platform': platform
                 }
                 
@@ -268,13 +238,29 @@ class GalleryDLDownloader:
             if os.path.exists(default_cookie):
                 logging.info("🍪 Using default Facebook cookies")
                 command.extend(['--cookies', default_cookie])
+
+        # Add cookie support for TikTok
+        if platform == "TikTok" and user_id:
+            cookie_file = os.path.join(self.cookie_path, f"tiktok_{user_id}.txt")
+            if os.path.exists(cookie_file):
+                logging.info(f"🍪 Using TikTok cookies for authentication")
+                command.extend(['--cookies', cookie_file])
+            else:
+                logging.warning(f"⚠️ No TikTok cookie file found for user {user_id}")
+        
+        # Check for general TikTok cookies
+        elif platform == "TikTok":
+            default_cookie = os.path.join(self.cookie_path, "tiktok.txt")
+            if os.path.exists(default_cookie):
+                logging.info("🍪 Using default TikTok cookies")
+                command.extend(['--cookies', default_cookie])
         
         # Add URL as final argument
         command.append(url)
         
         return command
     
-    async def _execute_with_retry(self, command: list, max_attempts: int = 3) -> Dict:
+    async def _execute_with_retry(self, command: list, max_attempts: int = 3, progress_callback: Optional[Callable] = None) -> Dict:
         """Execute command with retry logic (Async)."""
         for attempt in range(1, max_attempts + 1):
             try:
@@ -285,12 +271,52 @@ class GalleryDLDownloader:
                     stderr=asyncio.subprocess.PIPE
                 )
                 
-                # Wait for completion with timeout
+                # Stream output for progress updates
+                stdout_lines = []
+                stderr_lines = []
+                
                 try:
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                    while True:
+                        # Wait for line with timeout
+                        line = await asyncio.wait_for(process.stdout.readline(), timeout=300)
+                        if not line:
+                            break
+                            
+                        line_text = line.decode().strip()
+                        if line_text:
+                            stdout_lines.append(line_text)
+                            
+                            # Parse progress
+                            if progress_callback:
+                                # yt-dlp style: [download]  23.5% of ...
+                                if "[download]" in line_text and "%" in line_text:
+                                    # Extract percentage
+                                    try:
+                                        parts = line_text.split()
+                                        percent = next((p for p in parts if "%" in p), "0%")
+                                        if "ETA" in line_text:
+                                            eta = next((p for p in parts if ":" in p and len(p) <= 8 and p[0].isdigit()), "")
+                                            progress_callback(f"Downloading: {percent} (ETA {eta})")
+                                        else:
+                                            progress_callback(f"Downloading: {percent}")
+                                    except:
+                                        pass
+                                
+                                # gallery-dl style (usually just filenames)
+                                elif line_text.startswith('#'):
+                                    # Info lines
+                                    pass
+                                elif "." in line_text and "/" in line_text:
+                                    # Just say downloading...
+                                    progress_callback(f"Downloading: {os.path.basename(line_text)}")
+
+                    # Read remaining strings
+                    stderr_data = await process.stderr.read()
                     
-                    stdout_text = stdout.decode()
-                    stderr_text = stderr.decode()
+                    stdout_text = "\n".join(stdout_lines)
+                    stderr_text = stderr_data.decode()
+                    
+                    await process.wait()
                     
                     if process.returncode == 0:
                         return {

@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import os
+import time
+from core.storage import is_storage_critical, format_storage_report
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Callable, Any
 from enum import Enum
@@ -65,7 +68,13 @@ class DownloadQueue:
     ):
         self.max_concurrent = max_concurrent
         self.max_per_user = max_per_user
+        self.max_concurrent = max_concurrent
+        self.max_per_user = max_per_user
         self.status_callback = status_callback
+        
+        # Downloaders (set later or via init)
+        self.snapchat = None
+        self.gallery_dl = None
         
         self._queue: asyncio.Queue = asyncio.Queue()
         self._jobs: Dict[str, DownloadJob] = {}
@@ -104,7 +113,6 @@ class DownloadQueue:
         user_id: str,
         url: str,
         platform: str,
-        download_func: Callable,
         upload_func: Callable
     ) -> Optional[DownloadJob]:
         """
@@ -114,8 +122,8 @@ class DownloadQueue:
             user_id: Telegram user ID
             url: URL to download
             platform: Platform name (Snapchat, Instagram, etc.)
-            download_func: Async function to download content
-            upload_func: Async function to upload to Telegram
+            url: URL to download
+            platform: Platform name (Snapchat, Instagram, etc.)
             
         Returns:
             DownloadJob if queued, None if user limit reached
@@ -128,6 +136,13 @@ class DownloadQueue:
         if len(active_jobs) >= self.max_per_user:
             return None
         
+        # Deduplication check: Is this URL already being processed for this user?
+        for jid in active_jobs:
+            existing_job = self._jobs.get(jid)
+            if existing_job and existing_job.url == url:
+                logging.info(f"♻️ Job {jid} already active for URL: {url} (User: {user_id})")
+                return existing_job
+
         # Create job
         job_id = str(uuid.uuid4())[:8]
         job = DownloadJob(
@@ -144,8 +159,8 @@ class DownloadQueue:
             self._user_jobs[user_id] = []
         self._user_jobs[user_id].append(job_id)
         
-        # Add to queue with callbacks
-        await self._queue.put((job, download_func, upload_func))
+        # Add to queue
+        await self._queue.put((job, upload_func))
         
         logging.info(f"📋 Job {job_id} queued for user {user_id} ({platform})")
         return job
@@ -181,12 +196,16 @@ class DownloadQueue:
             try:
                 # Get next job (with timeout to check _running flag)
                 try:
-                    job, download_func, upload_func = await asyncio.wait_for(
+                    job, upload_func = await asyncio.wait_for(
                         self._queue.get(),
                         timeout=1.0
                     )
                 except asyncio.TimeoutError:
                     continue
+                except RuntimeError as e:
+                    if "Event loop is closed" in str(e):
+                        break
+                    raise
                 
                 logging.info(f"⚙️ Worker {worker_id} processing job {job.job_id}")
                 
@@ -196,8 +215,43 @@ class DownloadQueue:
                     job.message = "Downloading content..."
                     await self._notify_status(job)
                     
+                    # Check storage before download
+                    download_path = os.getenv('DOWNLOAD_PATH', './downloads')
+                    is_critical, current_usage = is_storage_critical(download_path, threshold=90.0)
+                    
+                    if is_critical:
+                        logging.warning(f"🛑 Storage critical ({current_usage}%). Job {job.job_id} blocked.")
+                        job.status = JobStatus.FAILED
+                        job.error = f"Storage Full ({current_usage}%)"
+                        job.message = "Disk space is almost full. Purge system to continue."
+                        await self._notify_status(job)
+                        continue
+
+                    # Define progress callback logic
+                    last_update = 0
+                    def progress_callback(progress_str: str):
+                        nonlocal last_update
+                        current_time = time.time()
+                        if current_time - last_update < 1.5:
+                            return
+                        job.message = progress_str
+                        # job.status is already downloading
+                        last_update = current_time
+                        if self.status_callback:
+                            asyncio.create_task(self.status_callback(job))
+
                     # Execute download
-                    result = await download_func()
+                    # Route Spotlight links to gallery-dl (better support for public videos)
+                    is_spotlight = "/spotlight/" in job.url
+                    
+                    if job.platform == "Snapchat" and self.snapchat and not is_spotlight:
+                         result = await self.snapchat.download(job.url, job.user_id)
+                    elif self.gallery_dl:
+                         result = await self.gallery_dl.download(
+                             job.url, job.platform, job.user_id, progress_callback=progress_callback
+                         )
+                    else:
+                         result = {'success': False, 'error': 'Downloader not initialized'}
                     
                     if not result.get('success'):
                         job.status = JobStatus.FAILED
@@ -240,6 +294,11 @@ class DownloadQueue:
                     
             except asyncio.CancelledError:
                 break
+            except RuntimeError as e:
+                if "Event loop is closed" in str(e):
+                    break
+                logging.error(f"Worker {worker_id} runtime error: {e}")
+                break
             except Exception as e:
                 logging.error(f"Worker {worker_id} error: {e}")
     
@@ -265,6 +324,8 @@ def get_queue() -> DownloadQueue:
 
 
 async def init_queue(
+    snapchat_downloader,
+    gallery_dl_downloader,
     max_concurrent: int = 3,
     max_per_user: int = 2,
     status_callback: Optional[Callable] = None
@@ -276,5 +337,8 @@ async def init_queue(
         max_per_user=max_per_user,
         status_callback=status_callback
     )
+    download_queue.snapchat = snapchat_downloader
+    download_queue.gallery_dl = gallery_dl_downloader
+    
     await download_queue.start()
     return download_queue

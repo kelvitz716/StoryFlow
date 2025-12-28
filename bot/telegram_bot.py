@@ -17,22 +17,27 @@ from telegram.ext import (
 )
 
 from core.platform import identify_platform, extract_snapchat_username
-from core.queue import DownloadQueue, JobStatus, init_queue, get_queue
+from core.queue import DownloadQueue, DownloadJob, JobStatus, init_queue, get_queue
 from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 from auth.cookies import CookieManager
 from core.stats import stats_manager
 
-# MTProto import (optional - for large files >50MB)
-try:
-    from auth.mtproto import MTProtoClient, get_mtproto_client, init_mtproto
-    MTPROTO_AVAILABLE = True
-except Exception as e:
-    logging.warning(f"MTProto not available: {e}")
-    MTProtoClient = None
-    get_mtproto_client = lambda: None
-    init_mtproto = None
-    MTPROTO_AVAILABLE = False
+# MTProto import (lazily loaded to avoid early event loop errors in Python 3.12)
+MTPROTO_AVAILABLE = None
+
+def _ensure_mtproto():
+    global MTPROTO_AVAILABLE
+    if MTPROTO_AVAILABLE is not None:
+        return MTPROTO_AVAILABLE
+    try:
+        # We don't import here, we just check if it's available
+        import auth.mtproto
+        MTPROTO_AVAILABLE = True
+    except Exception as e:
+        logging.warning(f"MTProto not available: {e}")
+        MTPROTO_AVAILABLE = False
+    return MTPROTO_AVAILABLE
 
 
 import random
@@ -41,7 +46,7 @@ import random
 snapchat: Optional[SnapchatDownloader] = None
 gallery_dl: Optional[GalleryDLDownloader] = None
 cookie_manager: Optional[CookieManager] = None
-mtproto_client: Optional[MTProtoClient] = None
+mtproto_client: Optional['MTProtoClient'] = None
 
 # Queue instance
 download_queue: Optional[DownloadQueue] = None
@@ -64,8 +69,8 @@ PROCESSING_MSGS = [
 # Map job_id -> status_message object for updates
 JOB_MESSAGES = {}
 
-async def queue_status_callback(job):
-    """Callback for queue status updates."""
+async def update_job_status(application: Application, job: 'DownloadJob'):
+    """Callback for queue status updates, using the application bot context."""
     status_msg = JOB_MESSAGES.get(job.job_id)
     if not status_msg:
         return
@@ -80,7 +85,7 @@ async def queue_status_callback(job):
             await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\nWaiting for available worker...", parse_mode='Markdown')
             
         elif job.status.value == "downloading":
-            await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} Grabbing {job.platform} content", parse_mode='Markdown')
+            await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} {job.message}", parse_mode='Markdown')
             
         elif job.status.value == "uploading":
             # Batch upload handles its own status updates, but we set a generic one just in case
@@ -92,13 +97,11 @@ async def queue_status_callback(job):
             stats_manager.increment_download(job.user_id, job.platform)
             
             # Final cleanup
-            if job.job_id in JOB_MESSAGES:
-                del JOB_MESSAGES[job.job_id]
+            JOB_MESSAGES.pop(job.job_id, None)
                 
         elif job.status.value == "failed":
             await status_msg.edit_text(f"❌ *Failed*\n{job.error}", parse_mode='Markdown')
-            if job.job_id in JOB_MESSAGES:
-                del JOB_MESSAGES[job.job_id]
+            JOB_MESSAGES.pop(job.job_id, None)
                 
     except Exception as e:
         logging.error(f"Failed to update status message for job {job.job_id}: {e}")
@@ -161,7 +164,7 @@ async def send_help_menu(target, is_new_message: bool = True):
         "*Available Commands:*\n"
         "• /start - Main menu\n"
         "• /help - Usage guide\n"
-        "• /my\_cookies - Manage login cookies\n"
+        "• /my\\_cookies - Manage login cookies\n"
         "• /purge - ⚠️ Delete all downloaded files (Maintenance)\n\n"
         "_Tap a platform for specific tips:_"
     )
@@ -205,6 +208,7 @@ async def send_cookies_menu(target, user_id: str):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Add Instagram", callback_data="cookies_instagram"),
          InlineKeyboardButton("📘 Add Facebook", callback_data="cookies_facebook")],
+        [InlineKeyboardButton("🎵 Add TikTok", callback_data="cookies_tiktok")],
         [InlineKeyboardButton("🗑️ Delete Cookies", callback_data="menu_delete_cookies")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
@@ -391,6 +395,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ])
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
     
+    elif query.data == "cookies_tiktok":
+        context.user_data['awaiting_cookies'] = 'tiktok'
+        text = (
+            "🎵 *Upload TikTok Cookies*\n\n"
+            "Send me your `cookies.txt` file from TikTok.\n\n"
+            "*How to get it:*\n"
+            "1. Install 'Get cookies.txt' extension\n"
+            "2. Go to tiktok.com (logged in)\n"
+            "3. Export cookies\n"
+            "4. Send the file here\n\n"
+            "_Waiting for your file..._"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    
     elif query.data == "menu_delete_cookies":
         text = (
             "🗑️ *Delete Cookies*\n\n"
@@ -399,6 +420,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📸 Instagram", callback_data="delete_instagram"),
              InlineKeyboardButton("📘 Facebook", callback_data="delete_facebook")],
+            [InlineKeyboardButton("🎵 TikTok", callback_data="delete_tiktok")],
             [InlineKeyboardButton("⚠️ Delete All", callback_data="delete_all")],
             [InlineKeyboardButton("⬅️ Back", callback_data="menu_cookies")],
         ])
@@ -420,10 +442,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ])
         await query.edit_message_text(text, reply_markup=keyboard)
     
+    elif query.data == "delete_tiktok":
+        deleted = cookie_manager.delete_cookie_file(user_id, "tiktok")
+        text = "✅ TikTok cookies deleted!" if deleted else "🤷 No TikTok cookies found."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Cookies", callback_data="menu_cookies")],
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard)
+    
     elif query.data == "delete_all":
         ig = cookie_manager.delete_cookie_file(user_id, "instagram")
         fb = cookie_manager.delete_cookie_file(user_id, "facebook")
-        text = "✅ All cookies deleted!" if (ig or fb) else "🤷 No cookies to delete."
+        tk = cookie_manager.delete_cookie_file(user_id, "tiktok")
+        text = "✅ All cookies deleted!" if (ig or fb or tk) else "🤷 No cookies to delete."
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Back to Cookies", callback_data="menu_cookies")],
         ])
@@ -443,12 +474,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     url = update.message.text.strip()
     user_id = str(update.effective_user.id)
     
+    if not is_supported_url(url):
+        await update.message.reply_text("🤔 Hmm, that doesn't look like a supported link. Try a Snapchat, Instagram, or TikTok link!")
+        return
+    
     # Identify platform
     platform = identify_platform(url)
-    
-    if platform == "Error":
-        await update.message.reply_text("🤔 Hmm, that doesn't look like a valid URL. Try again?")
-        return
     
     if platform == "Unknown":
         await update.message.reply_text(
@@ -493,7 +524,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             user_id=user_id,
             url=url,
             platform=platform,
-            download_func=download_func,
             upload_func=upload_func
         )
         
@@ -556,13 +586,35 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                 file_size = os.path.getsize(filepath)
                 file_ext = os.path.splitext(filepath)[1].lower()
                 
-                # 50MB limit for bot API - try MTProto for larger files
-                if file_size > 50 * 1024 * 1024:
+                # 20MB limit for bot API - try MTProto for larger files for reliability
+                if file_size > 20 * 1024 * 1024:
                     # Try MTProto for large files
                     if mtproto_client and mtproto_client.is_connected:
                         logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
                         chat_id = update.effective_chat.id
-                        success = await mtproto_client.upload_file(chat_id, filepath, caption="")
+                        
+                        # Progress callback
+                        last_upload_update = 0
+                        async def upload_progress(current, total):
+                            nonlocal last_upload_update
+                            current_time = time.time()
+                            if current_time - last_upload_update < 2.0:
+                                return
+                            last_upload_update = current_time
+                            percent = (current / total) * 100
+                            try:
+                                await status_msg.edit_text(
+                                    f"📤 Uploading large file via MTProto...\n"
+                                    f"File: {os.path.basename(filepath)}\n"
+                                    f"Progress: {percent:.1f}%"
+                                )
+                            except Exception:
+                                pass
+
+                        success = await mtproto_client.upload_file(
+                            chat_id, filepath, caption="",
+                            progress_callback=upload_progress
+                        )
                         if success:
                             uploaded_count += 1
                             # Cleanup after successful upload
@@ -701,7 +753,9 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
             if os.path.exists(filepath):
                 os.remove(filepath)
                 cleaned_count += 1
-                logging.debug(f"Cleaned up (resilient): {filepath}")
+                logging.debug(f"Resilient cleanup: {filepath}")
+        except FileNotFoundError:
+            pass # Already gone, which is fine
         except Exception as e:
             logging.warning(f"Failed to cleanup {filepath}: {e}")
             
@@ -731,6 +785,7 @@ async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Add Instagram", callback_data="cookies_instagram"),
          InlineKeyboardButton("📘 Add Facebook", callback_data="cookies_facebook")],
+        [InlineKeyboardButton("🎵 Add TikTok", callback_data="cookies_tiktok")],
         [InlineKeyboardButton("🗑️ Delete Cookies", callback_data="menu_delete_cookies")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
@@ -747,6 +802,7 @@ async def delete_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Instagram", callback_data="delete_instagram"),
          InlineKeyboardButton("📘 Facebook", callback_data="delete_facebook")],
+        [InlineKeyboardButton("🎵 TikTok", callback_data="delete_tiktok")],
         [InlineKeyboardButton("⚠️ Delete All", callback_data="delete_all")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
@@ -759,6 +815,21 @@ async def delete_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # Queue status command available when queue is enabled
 # async def queue_status(update, context): ...
+
+
+def is_supported_url(url: str) -> bool:
+    """Strictly validate that the URL belongs to a supported domain."""
+    import re
+    supported_domains = [
+        r'https?://(www\.)?snapchat\.com/.*',
+        r'https?://(www\.)?instagram\.com/.*',
+        r'https?://(www\.)?tiktok\.com/.*',
+        r'https?://vm\.tiktok\.com/.*',
+        r'https?://(www\.)?(twitter\.com|x\.com)/.*',
+        r'https?://(www\.)?facebook\.com/.*',
+        r'https?://fb\.watch/.*'
+    ]
+    return any(re.match(pattern, url, re.IGNORECASE) for pattern in supported_domains)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -792,8 +863,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     status_msg = await update.message.reply_text(f"⏳ Processing {awaiting_platform.title()} cookies...")
     
     try:
+        import tempfile
         file = await document.get_file()
-        temp_path = f"/tmp/cookies_{user_id}.txt"
+        
+        # Create a secure temporary file
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tf:
+            temp_path = tf.name
+        
         await file.download_to_drive(temp_path)
         
         # Save cookie file for the selected platform
@@ -942,31 +1018,48 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     app = Application.builder().token(token).read_timeout(120).write_timeout(120).build()
     
     # Initialize MTProto client and Download Queue
-    if MTPROTO_AVAILABLE and init_mtproto:
-        async def post_init(application):
-            global mtproto_client, download_queue
-            
-            # Start MTProto
-            mtproto_client = await init_mtproto()
-            if mtproto_client and mtproto_client.is_connected:
-                logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
-            else:
-                logging.info("ℹ️ MTProto not configured - files >50MB will be skipped")
-            
-            # Start Download Queue
-            logging.info("🚀 Starting download queue workers...")
-            download_queue = await init_queue(max_concurrent=3, status_callback=queue_status_callback)
+    async def post_init(application):
+        global mtproto_client, download_queue
         
-        app.post_init = post_init
-    else:
-        # Just init queue if MTProto failed
-        async def post_init(application):
-            global download_queue
-            logging.info("🚀 Starting download queue workers...")
-            download_queue = await init_queue(max_concurrent=3, status_callback=queue_status_callback)
+        # Start MTProto lazily to avoid event loop issues in Python 3.12
+        if _ensure_mtproto():
+            try:
+                from auth.mtproto import init_mtproto
+                mtproto_client = await init_mtproto()
+                if mtproto_client and mtproto_client.is_connected:
+                    logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
+                else:
+                    logging.info("ℹ️ MTProto not configured - files >50MB will be skipped")
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to initialize MTProto: {e}")
+        else:
             logging.info("ℹ️ MTProto not available - files >50MB will be skipped")
             
-        app.post_init = post_init
+        # Start Download Queue
+        logging.info("🚀 Starting download queue workers...")
+        download_queue = await init_queue(
+            snapchat_downloader=snapchat,
+            gallery_dl_downloader=gallery_dl,
+            max_concurrent=3,
+            max_per_user=2,
+            status_callback=lambda job: update_job_status(application, job)
+        )
+    
+    async def post_stop(application):
+        global mtproto_client, download_queue
+        
+        # Stop Download Queue
+        if download_queue:
+            logging.info("🛑 Stopping download queue...")
+            await download_queue.stop()
+            
+        # Stop MTProto
+        if mtproto_client:
+            logging.info("📴 Stopping MTProto...")
+            await mtproto_client.stop()
+
+    app.post_init = post_init
+    app.post_stop = post_stop
     
     # Store download path for cleanup job
     app.bot_data['download_path'] = download_path

@@ -7,7 +7,11 @@ import requests
 from typing import Dict, List, Optional
 
 from core.rate_limiter import RateLimiter
+from core.storage import is_storage_critical
 
+
+from core.platform import extract_snapchat_username
+from core.security import sanitize_filename
 
 class SnapchatDownloader:
     """Handler for Snapchat downloads using SnapStory DL API."""
@@ -34,6 +38,39 @@ class SnapchatDownloader:
         
         # Ensure output directory exists
         os.makedirs(output_path, exist_ok=True)
+    
+    async def download(self, url: str, user_id: Optional[str] = None) -> Dict:
+        """
+        Adapter method for Queue compatibility.
+        """
+        # Spotlight links are public and might be handled differently, 
+        # but for now we try to extract username or handle special cases
+        if "/spotlight/" in url:
+             # Spotlight usually requires gallery-dl as per previous logic in bot
+             # But if we are here, we are using SnapchatDownloader.
+             # If SnapchatDownloader doesn't support Spotlight, we should fail or fallback.
+             # Ideally, the bot routing should have sent this to gallery-dl.
+             # However, let's assume this downloader is for User Stories.
+             pass
+
+        username = extract_snapchat_username(url)
+        if not username:
+            return {
+                'success': False,
+                'error': 'Could not extract username from Snapchat URL',
+                'platform': 'Snapchat'
+            }
+            
+        # Run sync method in executor effectively (though here we just call it since it uses requests)
+        # Ideally we should run this in a thread if it blocks, but requests is blocking.
+        # Given the existing code structure, we can wrap it or just call it if it's fast enough.
+        # But wait, download_stories is synchronous (uses requests).
+        # We should make this async or run in executor.
+        
+        # Simple fix: wrap in asyncio.to_thread for Py3.9+ or run_in_executor
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.download_stories, username)
     
     def download_stories(self, username: str) -> Dict:
         """
@@ -96,6 +133,20 @@ class SnapchatDownloader:
                 if filename:
                     downloaded_files.append(filename)
                     logging.info(f"✅ Downloaded story {i}/{count}: {os.path.basename(filename)}")
+                    
+                    # Security/Stability check: stop if storage hits critical levels during bulk download
+                    is_critical, current_usage = is_storage_critical(self.output_path, threshold=90.0)
+                    if is_critical:
+                        logging.warning(f"⚠️ Storage threshold reached ({current_usage}%). Stopping download for @{username}.")
+                        return {
+                            'success': True,
+                            'platform': 'Snapchat',
+                            'username': username,
+                            'total_stories': count,
+                            'downloaded': len(downloaded_files),
+                            'files': downloaded_files,
+                            'message': f"Partially completed. Storage threshold reached ({current_usage}%)."
+                        }
             
             return {
                 'success': True,
@@ -169,11 +220,13 @@ class SnapchatDownloader:
             # Determine file extension based on media type
             extension = 'mp4' if media_type == 1 else 'jpg'
             
-            # Create filename
+
+            # Create filename causing sanitization
             ts = timestamp if timestamp else int(time.time())
+            safe_username = sanitize_filename(username)
             filename = os.path.join(
                 self.output_path,
-                f"snapchat_{username}_{ts}_{index}.{extension}"
+                f"snapchat_{safe_username}_{ts}_{index}.{extension}"
             )
             
             # Download file

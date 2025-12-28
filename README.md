@@ -76,9 +76,9 @@ StoryFlow/
 
 ## Requirements
 
-- **Python 3.12** (Recommended for best compatibility)
-- [gallery-dl](https://github.com/mikf/gallery-dl) (system-wide)
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) (for Facebook/TikTok fallback)
+- **Python 3.12** (Required for TgCrypto compatibility)
+- **FFmpeg** (Required for media processing)
+- Dependencies listed in `requirements.txt` (including `gallery-dl` and `yt-dlp`)
 
 ## Large File Support (MTProto)
 

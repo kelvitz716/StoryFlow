@@ -20,6 +20,14 @@ class CookieManager:
         self.cookie_path = cookie_path
         os.makedirs(cookie_path, exist_ok=True)
     
+    def _sanitize_name(self, name: str) -> str:
+        """Sanitize a name to prevent directory traversal (only allow alphanumeric, underscore, and dash)."""
+        import re
+        # Remove any characters that aren't alphanumeric, underscore, or dash
+        sanitized = re.sub(r'[^\w\-]', '', name)
+        # Fallback to 'unknown' if empty
+        return sanitized or 'unknown'
+
     def save_cookie_file(self, user_id: str, platform: str, file_path: str) -> Dict:
         """
         Save uploaded cookie file for user.
@@ -44,9 +52,11 @@ class CookieManager:
             expiry_info = self._get_cookie_expiry(file_path, platform)
             
             # Destination path
+            s_platform = self._sanitize_name(platform.lower())
+            s_user_id = self._sanitize_name(user_id)
             dest_file = os.path.join(
                 self.cookie_path,
-                f"{platform.lower()}_{user_id}.txt"
+                f"{s_platform}_{s_user_id}.txt"
             )
             
             # Copy file
@@ -103,6 +113,7 @@ class CookieManager:
             session_cookies = {
                 'instagram': 'sessionid',
                 'facebook': 'c_user',  # Facebook uses c_user for login state
+                'tiktok': 'sessionid_ss',  # TikTok uses sessionid_ss for login state
             }
             
             target_cookie = session_cookies.get(platform.lower(), 'sessionid')
@@ -184,9 +195,11 @@ class CookieManager:
         Returns:
             Cookie file path or None if not found
         """
+        s_platform = self._sanitize_name(platform.lower())
+        s_user_id = self._sanitize_name(user_id)
         cookie_file = os.path.join(
             self.cookie_path,
-            f"{platform.lower()}_{user_id}.txt"
+            f"{s_platform}_{s_user_id}.txt"
         )
         return cookie_file if os.path.exists(cookie_file) else None
     

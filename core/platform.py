@@ -1,14 +1,13 @@
-"""URL platform identification and username extraction."""
-
 import re
 import logging
 from urllib.parse import urlparse
 from typing import Tuple, Optional
+from core.security import validate_domain
 
 
 def identify_platform(url: str) -> str:
     """
-    Identify platform from URL using robust hostname parsing.
+    Identify platform using strict domain validation.
     
     Returns:
         - "Snapchat": For snapchat.com URLs
@@ -17,35 +16,19 @@ def identify_platform(url: str) -> str:
         - "Twitter": For twitter.com or x.com URLs
         - "Facebook": For facebook.com or fb.watch URLs
         - "Unknown": For unsupported platforms
-        - "Error": For invalid URLs
     """
-    try:
-        parsed = urlparse(url)
-        hostname = parsed.netloc.lower()
-        
-        if not hostname:
-            return "Error"
-        
-        # Remove www. prefix if present
-        hostname = hostname.replace('www.', '')
-        
-        # Platform matching
-        if 'snapchat.com' in hostname:
-            return "Snapchat"
-        elif 'instagram.com' in hostname:
-            return "Instagram"
-        elif 'tiktok.com' in hostname or 'vm.tiktok.com' in hostname:
-            return "TikTok"
-        elif 'twitter.com' in hostname or 'x.com' in hostname:
-            return "Twitter"
-        elif 'facebook.com' in hostname or 'fb.watch' in hostname:
-            return "Facebook"
-        else:
-            return "Unknown"
-            
-    except Exception as e:
-        logging.error(f"URL parsing error: {e}")
-        return "Error"
+    if validate_domain(url, ['snapchat.com']):
+        return "Snapchat"
+    elif validate_domain(url, ['instagram.com']):
+        return "Instagram"
+    elif validate_domain(url, ['tiktok.com', 'vm.tiktok.com']):
+        return "TikTok"
+    elif validate_domain(url, ['twitter.com', 'x.com']):
+        return "Twitter"
+    elif validate_domain(url, ['facebook.com', 'fb.watch']):
+        return "Facebook"
+    else:
+        return "Unknown"
 
 
 def extract_snapchat_username(url: str) -> Optional[str]:
