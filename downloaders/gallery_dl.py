@@ -10,16 +10,18 @@ from typing import Dict, Optional, Callable
 class GalleryDLDownloader:
     """Handler for general media downloads using gallery-dl."""
     
-    def __init__(self, output_path: str = './downloads', cookie_path: str = './cookies'):
+    def __init__(self, output_path: str = './downloads', cookie_path: str = './cookies', admin_id: Optional[str] = None):
         """
         Initialize gallery-dl downloader.
         
         Args:
             output_path: Directory to save downloaded media
             cookie_path: Directory containing cookie files
+            admin_id: Admin User ID for fallback cookies
         """
         self.output_path = output_path
         self.cookie_path = cookie_path
+        self.admin_id = admin_id
         os.makedirs(output_path, exist_ok=True)
         os.makedirs(cookie_path, exist_ok=True)
     
@@ -137,9 +139,9 @@ class GalleryDLDownloader:
             ]
             
             # Add cookies if available
-            cookie_file = os.path.join(self.cookie_path, f"{platform.lower()}_{user_id}.txt") if user_id else None
-            if cookie_file and os.path.exists(cookie_file):
-                logging.info(f"🍪 Using {platform} cookies with yt-dlp")
+            cookie_file = self._get_cookie_file(platform, user_id)
+            if cookie_file:
+                logging.info(f"🍪 Using {platform} cookies with yt-dlp: {os.path.basename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
             
             command.append(url)
@@ -207,58 +209,49 @@ class GalleryDLDownloader:
             '--no-mtime',  # Don't set file modification time
         ]
         
-        # Add cookie support for Instagram
-        if platform == "Instagram" and user_id:
-            cookie_file = os.path.join(self.cookie_path, f"instagram_{user_id}.txt")
-            if os.path.exists(cookie_file):
-                logging.info(f"🍪 Using Instagram cookies for authentication")
-                command.extend(['--cookies', cookie_file])
-            else:
-                logging.warning(f"⚠️ No Instagram cookie file found for user {user_id}")
-        
-        # Check for general Instagram cookies
-        elif platform == "Instagram":
-            default_cookie = os.path.join(self.cookie_path, "instagram.txt")
-            if os.path.exists(default_cookie):
-                logging.info("🍪 Using default Instagram cookies")
-                command.extend(['--cookies', default_cookie])
-        
-        # Add cookie support for Facebook
-        if platform == "Facebook" and user_id:
-            cookie_file = os.path.join(self.cookie_path, f"facebook_{user_id}.txt")
-            if os.path.exists(cookie_file):
-                logging.info(f"🍪 Using Facebook cookies for authentication")
-                command.extend(['--cookies', cookie_file])
-            else:
-                logging.warning(f"⚠️ No Facebook cookie file found for user {user_id}")
-        
-        # Check for general Facebook cookies
-        elif platform == "Facebook":
-            default_cookie = os.path.join(self.cookie_path, "facebook.txt")
-            if os.path.exists(default_cookie):
-                logging.info("🍪 Using default Facebook cookies")
-                command.extend(['--cookies', default_cookie])
+        # Add cookie support
+        cookie_file = self._get_cookie_file(platform, user_id)
+        if cookie_file:
+            logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
+            command.extend(['--cookies', cookie_file])
+        else:
+            # Only warn if it's a platform that typically needs cookies
+            if platform in ["Instagram", "Facebook", "TikTok"]:
+                logging.debug(f"⚠️ No cookies found for {platform}")
 
-        # Add cookie support for TikTok
-        if platform == "TikTok" and user_id:
-            cookie_file = os.path.join(self.cookie_path, f"tiktok_{user_id}.txt")
-            if os.path.exists(cookie_file):
-                logging.info(f"🍪 Using TikTok cookies for authentication")
-                command.extend(['--cookies', cookie_file])
-            else:
-                logging.warning(f"⚠️ No TikTok cookie file found for user {user_id}")
-        
-        # Check for general TikTok cookies
-        elif platform == "TikTok":
-            default_cookie = os.path.join(self.cookie_path, "tiktok.txt")
-            if os.path.exists(default_cookie):
-                logging.info("🍪 Using default TikTok cookies")
-                command.extend(['--cookies', default_cookie])
-        
         # Add URL as final argument
         command.append(url)
         
         return command
+
+    def _get_cookie_file(self, platform: str, user_id: Optional[str]) -> Optional[str]:
+        """
+        Get the best available cookie file:
+        1. Specific user cookies
+        2. Admin fallback cookies
+        3. Legacy default cookies
+        """
+        platform_lower = platform.lower()
+        
+        # 1. Specific User Cookies
+        if user_id:
+            user_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{user_id}.txt")
+            if os.path.exists(user_cookie):
+                return user_cookie
+        
+        # 2. Admin Fallback
+        if self.admin_id and self.admin_id != user_id:
+            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{self.admin_id}.txt")
+            if os.path.exists(admin_cookie):
+                logging.info(f"💡 using Admin cookies for {platform} (Fallback)")
+                return admin_cookie
+
+        # 3. Legacy Default
+        default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
+        if os.path.exists(default_cookie):
+            return default_cookie
+            
+        return None
     
     async def _execute_with_retry(self, command: list, max_attempts: int = 3, progress_callback: Optional[Callable] = None) -> Dict:
         """Execute command with retry logic (Async)."""

@@ -21,6 +21,7 @@ from core.queue import DownloadQueue, DownloadJob, JobStatus, init_queue, get_qu
 from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 from auth.cookies import CookieManager
+from auth.access import AccessManager  # [NEW]
 from core.stats import stats_manager
 
 # MTProto import (lazily loaded to avoid early event loop errors in Python 3.12)
@@ -46,6 +47,7 @@ import random
 snapchat: Optional[SnapchatDownloader] = None
 gallery_dl: Optional[GalleryDLDownloader] = None
 cookie_manager: Optional[CookieManager] = None
+access_manager: Optional[AccessManager] = None  # [NEW]
 mtproto_client: Optional['MTProtoClient'] = None
 
 # Queue instance
@@ -474,6 +476,15 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     url = update.message.text.strip()
     user_id = str(update.effective_user.id)
     
+    # [NEW] Access Check
+    if not access_manager.is_allowed(user_id):
+        if access_manager.is_admin(user_id):
+            pass # Admin is always allowed, but this check is redundant with is_allowed
+        else:
+            # Optionally notify them or just ignore
+            await update.message.reply_text(f"⛔ Not authorized to use this bot (ID: `{user_id}`).", parse_mode='Markdown')
+            return
+
     if not is_supported_url(url):
         await update.message.reply_text("🤔 Hmm, that doesn't look like a supported link. Try a Snapchat, Instagram, or TikTok link!")
         return
@@ -974,8 +985,12 @@ async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def purge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /purge command to delete all downloaded files."""
-    user_id = update.effective_user.id
-    # Optional: Check for admin ID if needed, but for personal bot it's fine
+    user_id = str(update.effective_user.id)
+    
+    # Security check: only allow admin to use purge
+    if not access_manager.is_admin(user_id):
+        await update.message.reply_text("⛔ Admin only command.")
+        return
     
     msg = await update.message.reply_text("🧹 Starting full system purge...")
     
@@ -997,11 +1012,70 @@ async def purge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logging.error("JobQueue not available to schedule purge")
 
 
+# ============= ADMIN COMMANDS =============
+
+async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /adduser command."""
+    user_id = str(update.effective_user.id)
+    if not access_manager.is_admin(user_id):
+        return # Ignore non-admins
+        
+    if not context.args:
+        await update.message.reply_text("Usage: /adduser <user_id>")
+        return
+        
+    target_id = context.args[0]
+    if access_manager.add_user(target_id):
+        await update.message.reply_text(f"✅ User {target_id} added.")
+    else:
+        await update.message.reply_text(f"⚠️ User {target_id} is already allowed.")
+
+
+async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /removeuser command."""
+    user_id = str(update.effective_user.id)
+    if not access_manager.is_admin(user_id):
+        return
+        
+    if not context.args:
+        await update.message.reply_text("Usage: /removeuser <user_id>")
+        return
+        
+    target_id = context.args[0]
+    if access_manager.remove_user(target_id):
+        await update.message.reply_text(f"✅ User {target_id} removed.")
+    else:
+        await update.message.reply_text(f"⚠️ User {target_id} was not in the list.")
+
+
+async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /listusers command."""
+    user_id = str(update.effective_user.id)
+    if not access_manager.is_admin(user_id):
+        return
+        
+    users = access_manager.get_allowed_users()
+    if not users:
+        await update.message.reply_text("No allowed users (only Admin).")
+    else:
+        user_list = "\n".join([f"• `{u}`" for u in users])
+        await update.message.reply_text(f"📋 **Allowed Users:**\n{user_list}", parse_mode='Markdown')
+
+
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_url: str) -> None:
     """Run the Telegram bot."""
-    global snapchat, gallery_dl, cookie_manager, mtproto_client
+    global snapchat, gallery_dl, cookie_manager, mtproto_client, access_manager
     
     # Initialize components
+    # [NEW] Admin ID from env
+    admin_id = os.getenv('ADMIN_USER_ID')
+    if not admin_id:
+        logging.warning("⚠️ ADMIN_USER_ID not set! Access control may be open or broken.")
+        # Default to the one requested if missing, though we added it to .env
+        admin_id = "618026357" 
+        
+    access_manager = AccessManager(admin_id=admin_id)
+
     snapchat = SnapchatDownloader(
         api_base_url=api_base_url,
         output_path=download_path
@@ -1009,7 +1083,8 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     
     gallery_dl = GalleryDLDownloader(
         output_path=download_path,
-        cookie_path=cookie_path
+        cookie_path=cookie_path,
+        admin_id=admin_id  # [NEW] Pass admin ID for shared cookies
     )
     
     cookie_manager = CookieManager(cookie_path=cookie_path)
@@ -1080,6 +1155,12 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     app.add_handler(CommandHandler("my_cookies", list_cookies))
     app.add_handler(CommandHandler("delete_cookies", delete_cookies))
     app.add_handler(CommandHandler("purge", purge_command))
+    
+    # Admin commands
+    app.add_handler(CommandHandler("adduser", add_user_command))
+    app.add_handler(CommandHandler("removeuser", remove_user_command))
+    app.add_handler(CommandHandler("listusers", list_users_command))
+
     # Note: /queue command available but queue not auto-started
     
     # Callback handler for inline keyboard buttons
