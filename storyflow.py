@@ -18,12 +18,40 @@ from downloaders.gallery_dl import GalleryDLDownloader
 
 
 def setup_logging():
-    """Configure logging for the application."""
+    """Configure logging for the application with sensitive data filtering."""
+    from utils.log_sanitizer import add_sensitive_data_filter
+    from logging.handlers import RotatingFileHandler
+    
+    # Create logs directory if it doesn't exist
+    os.makedirs('logs', exist_ok=True)
+    
+    # Configure rotating file handler (10MB max, keep 5 backups)
+    file_handler = RotatingFileHandler(
+        'logs/storyflow.log',
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    ))
+    
+    # Configure console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    ))
+    
+    # Setup root logger with both handlers
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
+        handlers=[file_handler, console_handler]
     )
+    
+    # Add sensitive data filter to prevent token/key exposure in logs
+    add_sensitive_data_filter()
 
 
 def print_banner():

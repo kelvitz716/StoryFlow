@@ -44,24 +44,49 @@ prompt_input() {
 TELEGRAM_BOT_TOKEN=$(get_env_val "TELEGRAM_BOT_TOKEN")
 TELEGRAM_API_ID=$(get_env_val "TELEGRAM_API_ID")
 TELEGRAM_API_HASH=$(get_env_val "TELEGRAM_API_HASH")
+TELEGRAM_PHONE_NUMBER=$(get_env_val "TELEGRAM_PHONE_NUMBER")
+ADMIN_USER_ID=$(get_env_val "ADMIN_USER_ID")
 MODE=$(get_env_val "MODE")
 
 # 1. Prompt for configuration
 echo "Please configure the application:"
-prompt_input "Enter Telegram Bot Token" "TELEGRAM_BOT_TOKEN" 
-prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" 
-prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" 
+prompt_input "Enter Telegram Bot Token" "TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"
+prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" "$TELEGRAM_API_ID"
+prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH"
+prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER"
+prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357"
 prompt_input "Enter Mode (telegram/cli)" "MODE" "telegram"
 
 # 2. Write to .env
 echo "📝 Updating .env file..."
 cat > .env <<EOF
-TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-TELEGRAM_API_ID=$TELEGRAM_API_ID
-TELEGRAM_API_HASH=$TELEGRAM_API_HASH
-MODE=$MODE
+# Admin Configuration
+ADMIN_USER_ID=$ADMIN_USER_ID
+
+# Snapchat API Configuration
+SNAPCHAT_API_BASE_URL=https://snapstories.netlify.app
+
+# Download Configuration
 DOWNLOAD_PATH=/app/downloads
 COOKIE_PATH=/app/cookies
+
+# Rate Limiting
+MAX_REQUESTS_PER_MINUTE=30
+RETRY_MAX_ATTEMPTS=3
+RETRY_INITIAL_WAIT=2
+RETRY_MAX_WAIT=60
+
+# Telegram Bot
+TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
+
+# MTProto API for large files >50MB (optional)
+# Get credentials from https://my.telegram.org
+TELEGRAM_API_ID=$TELEGRAM_API_ID
+TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+TELEGRAM_PHONE_NUMBER=$TELEGRAM_PHONE_NUMBER
+
+# Mode: cli or telegram
+MODE=$MODE
 EOF
 
 # 3. Build Docker Image

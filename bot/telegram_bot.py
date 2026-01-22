@@ -1,10 +1,12 @@
 """Telegram bot for StoryFlow media downloader."""
 
 import os
+import sys
 import logging
 import asyncio
 import time
 from typing import Optional
+from functools import wraps
 
 from telegram import Update, Document, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -71,6 +73,150 @@ PROCESSING_MSGS = [
 # Map job_id -> status_message object for updates
 JOB_MESSAGES = {}
 
+# MTProto authentication state
+AUTH_PENDING = None  # asyncio.Future for pending auth
+AUTH_TYPE = None  # 'code' or 'password'
+AUTH_ADMIN_ID = None  # Admin user ID for auth
+
+
+def requires_access(handler):
+    """
+    Decorator to enforce access control on command handlers.
+    
+    Checks if the user is allowed via access_manager before executing the handler.
+    Returns an "unauthorized" message if access is denied.
+    """
+    @wraps(handler)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        
+        # Check if access_manager is initialized and user is allowed
+        if access_manager and not access_manager.is_allowed(user_id):
+            await update.message.reply_text(
+                f"⛔ *Access Denied*\n\n"
+                f"You are not authorized to use this bot.\n"
+                f"User ID: `{user_id}`\n\n"
+                f"Please contact the bot administrator if you need access.",
+                parse_mode='Markdown'
+            )
+            logging.warning(f"🚫 Unauthorized access attempt from user {user_id}")
+            return
+        
+        # User is authorized, proceed with handler
+        return await handler(update, context)
+    
+    return wrapper
+
+
+async def get_auth_code(application: Application) -> str:
+    """
+    Request authentication code from admin via bot.
+    
+    Creates a Future and waits for admin to send the code.
+    Timeout: 180 seconds (3 minutes).
+    """
+    global AUTH_PENDING, AUTH_TYPE, AUTH_ADMIN_ID
+    
+    # Get admin ID from access_manager
+    admin_id = access_manager.admin_id if access_manager else None
+    if not admin_id:
+        raise Exception("Admin ID not configured")
+    
+    AUTH_ADMIN_ID = admin_id
+    
+    # Create Future for code
+    AUTH_PENDING = asyncio.Future()
+    AUTH_TYPE = 'code'
+    
+    # Send request to admin
+    try:
+        await application.bot.send_message(
+            chat_id=int(admin_id),
+            text=(
+                "📲 *MTProto Authentication Required*\n\n"
+                "A verification code has been sent to your phone.\n"
+                "Please send the code here (5-6 digits).\n\n"
+                "⏱️ Timeout: 3 minutes"
+            ),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logging.error(f"Failed to send auth request: {e}")
+        AUTH_PENDING = None
+        AUTH_TYPE = None
+        raise
+    
+    # Wait for code with timeout
+    try:
+        code = await asyncio.wait_for(AUTH_PENDING, timeout=180)
+        logging.info("✅ Auth code received from admin")
+        return code
+    except asyncio.TimeoutError:
+        logging.error("❌ Auth code timeout (3 minutes)")
+        await application.bot.send_message(
+            chat_id=int(admin_id),
+            text="❌ Authentication timed out. Please try again."
+        )
+        raise Exception("Authentication timeout")
+    finally:
+        AUTH_PENDING = None
+        AUTH_TYPE = None
+        AUTH_ADMIN_ID = None
+
+
+async def get_auth_password(application: Application) -> str:
+    """
+    Request 2FA password from admin via bot.
+    
+    Similar to get_auth_code but for password entry.
+    """
+    global AUTH_PENDING, AUTH_TYPE, AUTH_ADMIN_ID
+    
+    admin_id = access_manager.admin_id if access_manager else None
+    if not admin_id:
+        raise Exception("Admin ID not configured")
+    
+    AUTH_ADMIN_ID = admin_id
+    
+    # Create Future for password
+    AUTH_PENDING = asyncio.Future()
+    AUTH_TYPE = 'password'
+    
+    # Send request to admin
+    try:
+        await application.bot.send_message(
+            chat_id=int(admin_id),
+            text=(
+                "🔐 *2FA Password Required*\n\n"
+                "Please send your Two-Factor Authentication password.\n\n"
+                "⏱️ Timeout: 3 minutes"
+            ),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logging.error(f"Failed to send 2FA request: {e}")
+        AUTH_PENDING = None
+        AUTH_TYPE = None
+        raise
+    
+    # Wait for password with timeout
+    try:
+        password = await asyncio.wait_for(AUTH_PENDING, timeout=180)
+        logging.info("✅ 2FA password received from admin")
+        return password
+    except asyncio.TimeoutError:
+        logging.error("❌ 2FA password timeout (3 minutes)")
+        await application.bot.send_message(
+            chat_id=int(admin_id),
+            text="❌ Authentication timed out. Please try again."
+        )
+        raise Exception("Authentication timeout")
+    finally:
+        AUTH_PENDING = None
+        AUTH_TYPE = None
+        AUTH_ADMIN_ID = None
+
+
 async def update_job_status(application: Application, job: 'DownloadJob'):
     """Callback for queue status updates, using the application bot context."""
     status_msg = JOB_MESSAGES.get(job.job_id)
@@ -111,13 +257,19 @@ async def update_job_status(application: Application, job: 'DownloadJob'):
 
 # ============= MAIN MENU & NAVIGATION =============
 
-def get_main_menu_keyboard():
+def get_main_menu_keyboard(user_id: Optional[str] = None):
     """Get the main menu inline keyboard."""
-    return InlineKeyboardMarkup([
+    keyboard = [
         [InlineKeyboardButton("📖 How to Use", callback_data="menu_help")],
         [InlineKeyboardButton("🍪 Manage Cookies", callback_data="menu_cookies")],
         [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
-    ])
+    ]
+    
+    # [NEW] Admin Tools Button
+    if user_id and access_manager and access_manager.is_admin(user_id):
+        keyboard.append([InlineKeyboardButton("🛠️ Admin Tools", callback_data="menu_admin")])
+        
+    return InlineKeyboardMarkup(keyboard)
 
 
 def get_back_button(callback_data: str = "menu_main"):
@@ -134,11 +286,8 @@ async def send_main_menu(target, is_new_message: bool = True):
         "🐦 Twitter/X • 📘 Facebook\n\n"
         "👇 *Tap a button to get started!*"
     )
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("❓ Help & Usage", callback_data="menu_help")],
-        [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
-         InlineKeyboardButton("🍪 Manage Cookies", callback_data="menu_cookies")],
-    ])
+    user_id = str(target.chat.id) if hasattr(target, 'chat') else str(target.from_user.id)
+    keyboard = get_main_menu_keyboard(user_id)
     
     if is_new_message:
         await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
@@ -146,11 +295,13 @@ async def send_main_menu(target, is_new_message: bool = True):
         await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
+@requires_access
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send welcome message with main menu."""
     await send_main_menu(update.message, is_new_message=True)
 
 
+@requires_access
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send help via command."""
     await send_help_menu(update.message, is_new_message=True)
@@ -218,6 +369,32 @@ async def send_cookies_menu(target, user_id: str):
     await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
+async def send_admin_menu(target, user_id: str):
+    """Send the admin tools menu."""
+    if not access_manager.is_admin(user_id):
+        return
+
+    text = (
+        "🛠️ *Admin Tools*\n\n"
+        "Manage users and system access.\n"
+        f"Currently allowed users: `{len(access_manager.get_allowed_users())}`"
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 List Users", callback_data="admin_list"),
+         InlineKeyboardButton("⚠️ System Purge", callback_data="menu_purge_confirm")],
+        [InlineKeyboardButton("➕ Add User", callback_data="admin_add"),
+         InlineKeyboardButton("➖ Remove User", callback_data="admin_remove")],
+        [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
+    ])
+    
+    # Check if target is message or callback query
+    if hasattr(target, 'edit_message_text'):
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle all inline keyboard button callbacks."""
@@ -255,6 +432,40 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
         ])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif query.data == "menu_admin":
+        await send_admin_menu(query, user_id)
+
+    elif query.data == "admin_list":
+        users = access_manager.get_allowed_users()
+        if not users:
+            user_list = "_No users allowed (only Admins)_"
+        else:
+            user_list = "\n".join([f"• `{u}`" for u in users])
+        
+        text = f"📋 *Allowed Users:*\n\n{user_list}"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")]])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif query.data == "admin_add":
+        context.user_data['awaiting_action'] = 'add_user'
+        text = (
+            "➕ *Add User*\n\n"
+            "Send the Telegram ID of the user or channel you want to authorize.\n\n"
+            "_Tap Cancel to abort._"
+        )
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")]])
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+    elif query.data == "admin_remove":
+        context.user_data['awaiting_action'] = 'remove_user'
+        text = (
+            "➖ *Remove User*\n\n"
+            "Send the Telegram ID you want to remove.\n\n"
+            "_Tap Cancel to abort._"
+        )
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")]])
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
     
     # ============= PLATFORM HELP =============
@@ -473,16 +684,48 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle URL message."""
+    # Guard against None message (edited messages, channel posts, etc.)
+    if not update.message or not update.message.text:
+        logging.warning(f"Received update without message/text: {type(update)}")
+        return
+    
     url = update.message.text.strip()
     user_id = str(update.effective_user.id)
     
     # [NEW] Access Check
     if not access_manager.is_allowed(user_id):
         if access_manager.is_admin(user_id):
-            pass # Admin is always allowed, but this check is redundant with is_allowed
+            pass # Admin is always allowed
         else:
-            # Optionally notify them or just ignore
             await update.message.reply_text(f"⛔ Not authorized to use this bot (ID: `{user_id}`).", parse_mode='Markdown')
+            return
+
+    # [NEW] Admin Input Handling
+    action = context.user_data.get('awaiting_action')
+    if action and access_manager.is_admin(user_id):
+        if action == 'add_user':
+            target_id = url.strip() # In this context, url is just the text input
+            if target_id.isdigit() or target_id.startswith('-'):
+                if access_manager.add_user(target_id):
+                    await update.message.reply_text(f"✅ User/Channel `{target_id}` added!")
+                else:
+                    await update.message.reply_text(f"⚠️ User `{target_id}` is already allowed.")
+            else:
+                await update.message.reply_text("❌ Invalid ID format. Please send a numeric ID.")
+            
+            context.user_data.pop('awaiting_action', None)
+            await send_admin_menu(update.message, user_id)
+            return
+
+        elif action == 'remove_user':
+            target_id = url.strip()
+            if access_manager.remove_user(target_id):
+                await update.message.reply_text(f"✅ User `{target_id}` removed.")
+            else:
+                await update.message.reply_text(f"⚠️ User `{target_id}` was not found.")
+            
+            context.user_data.pop('awaiting_action', None)
+            await send_admin_menu(update.message, user_id)
             return
 
     if not is_supported_url(url):
@@ -676,13 +919,17 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                 caption=caption
             )
         
-        # Send media group with retry logic for flood control
+        # Send media group with improved retry logic for flood control
         if media_group:
-            max_retries = 3
-            for retry in range(max_retries):
+            upload_success = False
+            retry_count = 0
+            max_retry_attempts = 5  # Increased from 3
+            
+            while not upload_success and retry_count < max_retry_attempts:
                 try:
                     await update.message.reply_media_group(media=media_group)
                     uploaded_count += len(valid_files)
+                    upload_success = True
                     
                     # Cleanup: Delete files after successful upload
                     for filepath in valid_files:
@@ -692,27 +939,52 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                         except Exception as e:
                             logging.warning(f"Failed to cleanup {filepath}: {e}")
                     
-                    await asyncio.sleep(1)  # Rate limit
-                    break
+                    logging.info(f"✅ Successfully uploaded batch {batch_idx + 1}/{len(batches)}")
                     
                 except RetryAfter as e:
+                    retry_count += 1
                     wait_time = e.retry_after
-                    logging.warning(f"Flood control: waiting {wait_time}s")
-                    await status_msg.edit_text(
-                        f"⏳ Telegram says slow down! Waiting {wait_time}s...\n"
-                        f"Batch {batch_idx + 1}/{len(batches)}"
-                    )
-                    await asyncio.sleep(wait_time + 1)
+                    logging.warning(f"⏳ FloodWait triggered: waiting {wait_time}s (attempt {retry_count}/{max_retry_attempts})")
+                    
+                    try:
+                        await status_msg.edit_text(
+                            f"⏳ Telegram rate limit hit! Waiting {wait_time}s...\\n"
+                            f"Batch {batch_idx + 1}/{len(batches)} • Attempt {retry_count}/{max_retry_attempts}\\n"
+                            f"Don't worry, I'll retry automatically! 🔄"
+                        )
+                    except Exception:
+                        pass  # Ignore if status update fails
+                    
+                    await asyncio.sleep(wait_time + 2)  # Wait requested time + buffer
                     
                 except Exception as e:
-                    if 'flood' in str(e).lower() or 'retry' in str(e).lower():
-                        wait_time = 30
-                        logging.warning(f"Possible flood control: waiting {wait_time}s")
+                    retry_count += 1
+                    
+                    # Check if it's a flood-related error
+                    error_str = str(e).lower()
+                    if 'flood' in error_str or 'retry' in error_str or '429' in error_str:
+                        wait_time = 30 + (retry_count * 10)  # Exponential backoff
+                        logging.warning(f"⏳ Possible flood control (attempt {retry_count}): waiting {wait_time}s - {e}")
+                        
+                        try:
+                            await status_msg.edit_text(
+                                f"⏳ Rate limit detected! Waiting {wait_time}s...\\n"
+                                f"Batch {batch_idx + 1}/{len(batches)} • Attempt {retry_count}/{max_retry_attempts}"
+                            )
+                        except Exception:
+                            pass
+                        
                         await asyncio.sleep(wait_time)
                     else:
-                        logging.error(f"Error sending media group: {e}")
+                        # Non-flood error - log and break
+                        logging.error(f"❌ Error sending media group batch {batch_idx + 1}: {e}")
                         failed_count += len(valid_files)
                         break
+            
+            # If we exhausted retries without success
+            if not upload_success and retry_count >= max_retry_attempts:
+                logging.error(f"❌ Failed to upload batch {batch_idx + 1} after {max_retry_attempts} attempts")
+                failed_count += len(valid_files)
         
         # Send files that couldn't be in the media group individually
         for file_type, filepath in files_to_send_individually:
@@ -723,7 +995,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                     else:
                         await update.message.reply_document(f, caption=f"📁 {os.path.basename(filepath)}")
                     uploaded_count += 1
-                    await asyncio.sleep(1)  # Rate limit
+                    await asyncio.sleep(2)  # Increased delay for individual files
             except Exception as e:
                 logging.error(f"Error sending individual file {filepath}: {e}")
                 failed_count += 1
@@ -736,9 +1008,15 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                     except Exception as e:
                         logging.warning(f"Failed to cleanup {filepath}: {e}")
         
-        # Delay between batches to avoid flood control
+        # Progressive delay between batches to avoid flood control
         if batch_idx < len(batches) - 1:
-            await asyncio.sleep(1)
+            # Progressive delay: starts at 2s, increases to 7s for later batches
+            base_delay = 2
+            incremental_delay = min(batch_idx * 0.5, 5)  # Max 5s additional delay
+            total_delay = base_delay + incremental_delay
+            
+            logging.info(f"⏱️ Waiting {total_delay:.1f}s before next batch (progressive rate limiting)")
+            await asyncio.sleep(total_delay)
     
     # Final Status Update
     if failed_count == 0:
@@ -774,6 +1052,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
         logging.info(f"✨ Cleanup verified: {cleaned_count}/{len(files)} files removed.")
 
 
+@requires_access
 async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /upload_cookies command - show cookie menu."""
     user_id = str(update.effective_user.id)
@@ -803,11 +1082,13 @@ async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
+@requires_access
 async def list_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Alias for upload_cookies - shows cookie status."""
     await upload_cookies(update, context)
 
 
+@requires_access
 async def delete_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /delete_cookies command."""
     keyboard = InlineKeyboardMarkup([
@@ -843,6 +1124,48 @@ def is_supported_url(url: str) -> bool:
     return any(re.match(pattern, url, re.IGNORECASE) for pattern in supported_domains)
 
 
+async def handle_auth_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle MTProto authentication code/password input from admin.
+    
+    Intercepts messages when AUTH_PENDING is active.
+    """
+    global AUTH_PENDING, AUTH_TYPE, AUTH_ADMIN_ID
+    
+    # Only process if auth is pending and from admin
+    if not AUTH_PENDING or not AUTH_TYPE:
+        return  # Not waiting for auth, let other handlers process
+    
+    user_id = str(update.effective_user.id)
+    if user_id != AUTH_ADMIN_ID:
+        return  # Not from admin
+    
+    text = update.message.text.strip()
+    
+    if AUTH_TYPE == 'code':
+        # Validate code format (5-6 digits, possibly with dash)
+        code = text.replace('-', '').replace(' ', '')
+        if not code.isdigit() or len(code) not in [5, 6]:
+            await update.message.reply_text(
+                "❌ Invalid code format. Please send 5-6 digits (e.g., 12345 or 123-456)"
+            )
+            return
+        
+        # Resolve the Future with the code
+        if not AUTH_PENDING.done():
+            AUTH_PENDING.set_result(code)
+            await update.message.reply_text("✅ Code received! Authenticating...")
+            logging.info(f"📲 Auth code submitted by admin")
+    
+    elif AUTH_TYPE == 'password':
+        # No validation for password, accept as-is
+        if not AUTH_PENDING.done():
+            AUTH_PENDING.set_result(text)
+            await update.message.reply_text("✅ Password received! Authenticating...")
+            logging.info(f"🔐 2FA password submitted by admin")
+
+
+@requires_access
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle document (cookie file) upload."""
     document: Document = update.message.document
@@ -1067,13 +1390,17 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     global snapchat, gallery_dl, cookie_manager, mtproto_client, access_manager
     
     # Initialize components
-    # [NEW] Admin ID from env
+    # Get Admin ID from environment - REQUIRED for security
     admin_id = os.getenv('ADMIN_USER_ID')
     if not admin_id:
-        logging.warning("⚠️ ADMIN_USER_ID not set! Access control may be open or broken.")
-        # Default to the one requested if missing, though we added it to .env
-        admin_id = "618026357" 
+        logging.error("❌ CRITICAL: ADMIN_USER_ID environment variable is not set!")
+        logging.error("   The bot cannot run securely without an admin user ID.")
+        logging.error("   Please set ADMIN_USER_ID in your .env file:")
+        logging.error("   ADMIN_USER_ID=your_telegram_user_id")
+        logging.error("   Get your User ID by messaging @userinfobot on Telegram")
+        sys.exit(1)
         
+    logging.info(f"🔐 Access control enabled for admin: {admin_id[:3]}***{admin_id[-3:]}")
     access_manager = AccessManager(admin_id=admin_id)
 
     snapchat = SnapchatDownloader(
@@ -1103,6 +1430,11 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
                 mtproto_client = await init_mtproto()
                 if mtproto_client and mtproto_client.is_connected:
                     logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
+                    
+                    # Configure authentication callbacks for interactive auth via bot
+                    mtproto_client.code_callback = lambda: get_auth_code(application)
+                    mtproto_client.password_callback = lambda: get_auth_password(application)
+                    logging.debug("🔧 MTProto auth callbacks configured")
                 else:
                     logging.info("ℹ️ MTProto not configured - files >50MB will be skipped")
             except Exception as e:
@@ -1139,6 +1471,24 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     # Store download path for cleanup job
     app.bot_data['download_path'] = download_path
     
+    # Global error handler for unhandled exceptions
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log errors and send user-friendly message."""
+        logging.error(f"Exception while handling an update:", exc_info=context.error)
+        
+        # Try to inform the user
+        try:
+            if update and isinstance(update, Update) and update.effective_message:
+                await update.effective_message.reply_text(
+                    "⚠️ *Oops! Something went wrong.*\\n\\n"
+                    "The error has been logged. Please try again or contact support if the issue persists.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
+            logging.error(f"Failed to send error message to user: {e}")
+    
+    app.add_error_handler(error_handler)
+    
     # Schedule cleanup job (every 24h)
     if app.job_queue:
         app.job_queue.run_repeating(cleanup_job, interval=86400, first=10)
@@ -1165,6 +1515,12 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     
     # Callback handler for inline keyboard buttons
     app.add_handler(CallbackQueryHandler(button_callback))
+    
+    # MTProto auth handler (high priority - intercepts auth codes)
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_auth_input
+    ), group=-1)  # Higher priority than URL handler
     
     # URL handler (text messages that look like URLs)
     app.add_handler(MessageHandler(

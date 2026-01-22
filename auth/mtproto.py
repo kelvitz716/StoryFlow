@@ -36,28 +36,35 @@ class MTProtoClient:
         self,
         api_id: Optional[str] = None,
         api_hash: Optional[str] = None,
+        phone_number: Optional[str] = None,
         session_path: str = './sessions'
     ):
         """
-        Initialize MTProto client.
+        Initialize MTProto client for user account (2GB upload limit).
         
         Args:
             api_id: Telegram API ID from my.telegram.org
             api_hash: Telegram API hash from my.telegram.org
+            phone_number: Phone number for user authentication
             session_path: Directory to store session files
         """
         self.api_id = api_id or os.getenv('TELEGRAM_API_ID')
         self.api_hash = api_hash or os.getenv('TELEGRAM_API_HASH')
+        self.phone_number = phone_number or os.getenv('TELEGRAM_PHONE_NUMBER')
         self.session_path = session_path
         self.client: Optional[Client] = None
         self._is_connected = False
+        
+        # Callbacks for interactive authentication (set by bot)
+        self.code_callback = None  # async function that returns the code
+        self.password_callback = None  # async function that returns 2FA password
         
         os.makedirs(session_path, exist_ok=True)
     
     @property
     def is_configured(self) -> bool:
         """Check if MTProto credentials are configured."""
-        return bool(self.api_id and self.api_hash and _ensure_pyrogram())
+        return bool(self.api_id and self.api_hash and self.phone_number and _ensure_pyrogram())
     
     @property
     def is_connected(self) -> bool:
@@ -66,7 +73,10 @@ class MTProtoClient:
     
     async def start(self) -> bool:
         """
-        Start the MTProto client.
+        Start the MTProto client using user session.
+        
+        Uses existing session if available, otherwise authenticates interactively
+        using provided callbacks for code entry.
         
         Returns:
             True if started successfully, False otherwise
@@ -76,33 +86,73 @@ class MTProtoClient:
             return False
         
         if not self.is_configured:
-            logging.warning("⚠️ MTProto not configured. Set TELEGRAM_API_ID and TELEGRAM_API_HASH")
+            logging.warning("⚠️ MTProto not configured. Set TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_PHONE_NUMBER")
             return False
         
         try:
             session_file = os.path.join(self.session_path, "storyflow_user")
             
+            logging.info("📱 Starting MTProto user client...")
+            
             self.client = Client(
                 session_file,
                 api_id=int(self.api_id),
                 api_hash=self.api_hash,
+                phone_number=self.phone_number
             )
+            
+            # Set up code and password handlers if callbacks are provided
+            if self.code_callback:
+                self.client.phone_code = self._code_handler
+            if self.password_callback:
+                self.client.password = self._password_handler
             
             await self.client.start()
             self._is_connected = True
             
-            # Security: Restrict session file permissions to owner only
-            if os.path.exists(session_file + ".session"):
-                os.chmod(session_file + ".session", 0o600)
+            # Security: Restrict session file permissions
+            session_file_path = session_file + ".session"
+            if os.path.exists(session_file_path):
+                os.chmod(session_file_path, 0o600)
+                logging.debug(f"🔒 Session file secured: {session_file_path}")
             
             me = await self.client.get_me()
-            logging.info(f"✅ MTProto connected as {me.first_name} (@{me.username})")
+            logging.info(f"✅ MTProto connected as user: {me.first_name} (@{me.username}) - 2GB upload limit")
             return True
             
         except Exception as e:
             logging.error(f"❌ MTProto connection failed: {e}")
+            logging.error(f"   For Docker: Set TELEGRAM_SESSION_STRING in .env")
+            logging.error(f"   To generate: Run 'python -m auth.generate_session' locally")
+            logging.error(f"   Get API credentials from: https://my.telegram.org/apps")
             self._is_connected = False
             return False
+    
+    
+    async def _code_handler(self):
+        """Handler for phone code - calls the callback if set."""
+        if self.code_callback:
+            logging.info("📲 Requesting authentication code via callback...")
+            code = await self.code_callback()
+            logging.debug(f"✅ Code received from callback")
+            return code
+        else:
+            # Fallback to console input (shouldn't happen in bot mode)
+            logging.warning("⚠️ No code callback set, falling back to console")
+            return input("Enter the code you received: ")
+    
+    async def _password_handler(self):
+        """Handler for 2FA password - calls the callback if set."""
+        if self.password_callback:
+            logging.info("🔐 Requesting 2FA password via callback...")
+            password = await self.password_callback()
+            logging.debug(f"✅ Password received from callback")
+            return password
+        else:
+            # Fallback to console input (shouldn't happen in bot mode)
+            logging.warning("⚠️ No password callback set, falling back to console")
+            import getpass
+            return getpass.getpass("Enter your 2FA password: ")
     
     async def stop(self):
         """Stop the MTProto client."""
