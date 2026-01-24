@@ -840,8 +840,8 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                 file_size = os.path.getsize(filepath)
                 file_ext = os.path.splitext(filepath)[1].lower()
                 
-                # 20MB limit for bot API - try MTProto for larger files for reliability
-                if file_size > 20 * 1024 * 1024:
+                # 45MB limit (Bot API max is 50MB) - try MTProto for larger files for reliability
+                if file_size > 45 * 1024 * 1024:
                     # Try MTProto for large files
                     if mtproto_client and mtproto_client.is_connected:
                         logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
@@ -1428,13 +1428,16 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
             try:
                 from auth.mtproto import init_mtproto
                 mtproto_client = await init_mtproto()
-                if mtproto_client and mtproto_client.is_connected:
-                    logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
-                    
-                    # Configure authentication callbacks for interactive auth via bot
+                
+                # Set callbacks for interactive auth (if no session string)
+                if mtproto_client:
                     mtproto_client.code_callback = lambda: get_auth_code(application)
                     mtproto_client.password_callback = lambda: get_auth_password(application)
-                    logging.debug("🔧 MTProto auth callbacks configured")
+                    
+                    if mtproto_client.is_connected:
+                        logging.info("📤 MTProto ready for large file uploads (up to 2GB)")
+                    else:
+                        logging.info("📤 MTProto ready - will authenticate when >50MB file uploaded")
                 else:
                     logging.info("ℹ️ MTProto not configured - files >50MB will be skipped")
             except Exception as e:

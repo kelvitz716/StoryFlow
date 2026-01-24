@@ -45,6 +45,7 @@ TELEGRAM_BOT_TOKEN=$(get_env_val "TELEGRAM_BOT_TOKEN")
 TELEGRAM_API_ID=$(get_env_val "TELEGRAM_API_ID")
 TELEGRAM_API_HASH=$(get_env_val "TELEGRAM_API_HASH")
 TELEGRAM_PHONE_NUMBER=$(get_env_val "TELEGRAM_PHONE_NUMBER")
+TELEGRAM_SESSION_STRING=$(get_env_val "TELEGRAM_SESSION_STRING")
 ADMIN_USER_ID=$(get_env_val "ADMIN_USER_ID")
 MODE=$(get_env_val "MODE")
 
@@ -54,6 +55,7 @@ prompt_input "Enter Telegram Bot Token" "TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKE
 prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" "$TELEGRAM_API_ID"
 prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH"
 prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER"
+prompt_input "Enter Session String (optional, for production)" "TELEGRAM_SESSION_STRING" "$TELEGRAM_SESSION_STRING"
 prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357"
 prompt_input "Enter Mode (telegram/cli)" "MODE" "telegram"
 
@@ -84,6 +86,10 @@ TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 TELEGRAM_API_ID=$TELEGRAM_API_ID
 TELEGRAM_API_HASH=$TELEGRAM_API_HASH
 TELEGRAM_PHONE_NUMBER=$TELEGRAM_PHONE_NUMBER
+
+# MTProto Session String (optional, for production)
+# Generate with: python scripts/generate_session.py
+TELEGRAM_SESSION_STRING=$TELEGRAM_SESSION_STRING
 
 # Mode: cli or telegram
 MODE=$MODE

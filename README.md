@@ -53,6 +53,18 @@ python storyflow.py
 | `/my_cookies` | View saved cookies |
 | `/delete_cookies` | Remove cookies |
 
+## 📚 Documentation
+
+The full documentation is available in the `docs` directory, organized as a "Second Brain" for easy navigation.
+
+[**📖 Documentation Index**](docs/README.md)
+
+- [Setup Guide](docs/guides/SETUP.md)
+- [Usage Guide](docs/guides/USAGE.md)
+- [Architecture](docs/technical/ARCHITECTURE.md)
+- [Command Flow](docs/technical/command_flow.md)
+
+
 ## Project Structure
 
 ```

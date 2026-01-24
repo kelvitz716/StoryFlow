@@ -64,5 +64,4 @@ data/stats.json
 storyflow_log_analysis.txt
 storyflow_logs.txt
 data/allowed_users.json
-data/stats.json
-data/stats.json
+*stats.json
