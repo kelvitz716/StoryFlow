@@ -1,8 +1,8 @@
 {
   "618026357": {
-    "total_downloads": 449,
+    "total_downloads": 451,
     "platforms": {
-      "Instagram": 244,
+      "Instagram": 246,
       "Snapchat": 95,
       "TikTok": 107,
       "Twitter": 2,
@@ -16,11 +16,12 @@
     }
   },
   "777000": {
-    "total_downloads": 86,
+    "total_downloads": 183,
     "platforms": {
-      "Snapchat": 14,
-      "Instagram": 40,
-      "TikTok": 32
+      "Snapchat": 23,
+      "Instagram": 114,
+      "TikTok": 43,
+      "Facebook": 3
     }
   },
   "1087968824": {

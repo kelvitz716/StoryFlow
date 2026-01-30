@@ -162,7 +162,9 @@ class DownloadQueue:
         # Add to queue
         await self._queue.put((job, upload_func))
         
-        logging.info(f"📋 Job {job_id} queued for user {user_id} ({platform})")
+        # Mask user_id for privacy
+        masked_user = f"{user_id[:3]}***{user_id[-3:]}" if len(user_id) > 6 else "***"
+        logging.info(f"📋 Job {job_id} queued for user {masked_user} ({platform})")
         return job
     
     def get_job(self, job_id: str) -> Optional[DownloadJob]:

@@ -244,6 +244,7 @@ class MTProtoClient:
         chat_id: int,
         file_path: str,
         caption: str = "",
+        reply_to_message_id: Optional[int] = None,
         progress_callback=None
     ) -> bool:
         """
@@ -253,6 +254,7 @@ class MTProtoClient:
             chat_id: Telegram chat ID to send to
             file_path: Path to file to upload
             caption: Optional caption
+            reply_to_message_id: Optional message ID to reply to
             progress_callback: Optional callback for progress updates
             
         Returns:
@@ -264,7 +266,9 @@ class MTProtoClient:
         
         try:
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            logging.info(f"📤 MTProto uploading {file_size_mb:.1f}MB file...")
+            # Mask chat_id for privacy (show first 3 and last 3 digits)
+            masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
+            logging.info(f"📤 MTProto uploading {file_size_mb:.1f}MB file to chat_id={masked_chat}...")
             
             # Determine if video or document
             ext = os.path.splitext(file_path)[1].lower()
@@ -275,6 +279,7 @@ class MTProtoClient:
                     chat_id=chat_id,
                     video=file_path,
                     caption=caption,
+                    reply_to_message_id=reply_to_message_id,
                     progress=progress_callback or self._default_progress
                 )
             else:
@@ -282,6 +287,7 @@ class MTProtoClient:
                     chat_id=chat_id,
                     document=file_path,
                     caption=caption,
+                    reply_to_message_id=reply_to_message_id,
                     progress=progress_callback or self._default_progress
                 )
             

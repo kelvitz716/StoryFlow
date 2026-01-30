@@ -846,6 +846,10 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                     if mtproto_client and mtproto_client.is_connected:
                         logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
                         chat_id = update.effective_chat.id
+                        message_id = update.message.message_id
+                        # Mask for privacy
+                        masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
+                        logging.debug(f"📍 Extracted chat_id={masked_chat}, message_id={message_id}")
                         
                         # Progress callback
                         last_upload_update = 0
@@ -867,6 +871,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
 
                         success = await mtproto_client.upload_file(
                             chat_id, filepath, caption="",
+                            reply_to_message_id=message_id,
                             progress_callback=upload_progress
                         )
                         if success:
