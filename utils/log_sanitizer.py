@@ -47,9 +47,15 @@ class SensitiveDataFilter(logging.Filter):
         # Sanitize args if present
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {k: self.sanitize(str(v)) for k, v in record.args.items()}
+                record.args = {
+                    k: v if isinstance(v, (int, float)) else self.sanitize(str(v))
+                    for k, v in record.args.items()
+                }
             elif isinstance(record.args, tuple):
-                record.args = tuple(self.sanitize(str(arg)) for arg in record.args)
+                record.args = tuple(
+                    arg if isinstance(arg, (int, float)) else self.sanitize(str(arg))
+                    for arg in record.args
+                )
         
         return True
     

@@ -19,16 +19,35 @@ prompt_input() {
     local prompt="$1"
     local var_ref="$2"
     local default="$3"
+    local mask="$4"  # set to "mask" to hide default value
     local current_val="${!var_ref}"
-
+    
+    # Determine what to show as default in the prompt
+    local display_default=""
     if [ -n "$current_val" ]; then
-        read -p "$prompt [$current_val]: " input
+        if [ "$mask" == "mask" ] && [ ${#current_val} -gt 3 ]; then
+            display_default="...${current_val: -3}"
+        elif [ "$mask" == "mask" ]; then
+            display_default="******"
+        else
+            display_default="$current_val"
+        fi
+        
+        read -p "$prompt [$display_default]: " input
         if [ -z "$input" ]; then
             input="$current_val"
         fi
     else
         if [ -n "$default" ]; then
-            read -p "$prompt [$default]: " input
+            if [ "$mask" == "mask" ] && [ ${#default} -gt 3 ]; then
+                display_default="...${default: -3}"
+            elif [ "$mask" == "mask" ]; then
+                display_default="******"
+            else
+                display_default="$default"
+            fi
+            
+            read -p "$prompt [$display_default]: " input
             if [ -z "$input" ]; then
                 input="$default"
             fi
@@ -51,12 +70,12 @@ MODE=$(get_env_val "MODE")
 
 # 1. Prompt for configuration
 echo "Please configure the application:"
-prompt_input "Enter Telegram Bot Token" "TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"
-prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" "$TELEGRAM_API_ID"
-prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH"
-prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER"
-prompt_input "Enter Session String (optional, for production)" "TELEGRAM_SESSION_STRING" "$TELEGRAM_SESSION_STRING"
-prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357"
+prompt_input "Enter Telegram Bot Token" "TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN" "mask"
+prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" "$TELEGRAM_API_ID" "mask"
+prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH" "mask"
+prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER" "mask"
+prompt_input "Enter Session String (optional, for production)" "TELEGRAM_SESSION_STRING" "$TELEGRAM_SESSION_STRING" "mask"
+prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357" "mask"
 prompt_input "Enter Mode (telegram/cli)" "MODE" "telegram"
 
 # 2. Write to .env

@@ -19,7 +19,7 @@ from downloaders.gallery_dl import GalleryDLDownloader
 
 def setup_logging():
     """Configure logging for the application with sensitive data filtering."""
-    from utils.log_sanitizer import add_sensitive_data_filter
+    from utils.log_sanitizer import SensitiveDataFilter
     from logging.handlers import RotatingFileHandler
     
     # Create logs directory if it doesn't exist
@@ -50,8 +50,10 @@ def setup_logging():
         handlers=[file_handler, console_handler]
     )
     
-    # Add sensitive data filter to prevent token/key exposure in logs
-    add_sensitive_data_filter()
+    # Add sensitive data filter to handlers (this catches library logs too)
+    sensitive_filter = SensitiveDataFilter()
+    file_handler.addFilter(sensitive_filter)
+    console_handler.addFilter(sensitive_filter)
 
 
 def print_banner():
