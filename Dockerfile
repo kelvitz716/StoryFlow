@@ -17,8 +17,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p downloads cookies sessions data
+# Create storyflow user
+RUN groupadd -r storyflow && useradd -r -g storyflow -u 1000 -m -d /app storyflow
+
+# Create necessary directories and set permissions
+RUN mkdir -p downloads cookies sessions data logs && \
+    chown -R storyflow:storyflow /app
+
+# Switch to non-root user
+USER storyflow
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

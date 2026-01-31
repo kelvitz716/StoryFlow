@@ -127,10 +127,17 @@ echo "🏃 Starting container..."
 docker stop storyflow_app 2>/dev/null || true
 docker rm storyflow_app 2>/dev/null || true
 
-# Fix permissions for mounted directories (fixes Permission Denied errors)
-# chmod 777 ensures the internal container user can write regardless of UID
+# Fix permissions for mounted directories (using container UID 1000)
+# We use a temporary alpine container to chown the volumes. 
+# This works even if the host user doesn't have sudo, because docker runs as root.
 mkdir -p downloads cookies sessions data
-chmod -R 777 downloads cookies sessions data 2>/dev/null || true
+echo "🔒 Setting permissions for volumes (UID 1000)..."
+docker run --rm \
+    -v "$(pwd)/downloads:/downloads" \
+    -v "$(pwd)/cookies:/cookies" \
+    -v "$(pwd)/sessions:/sessions" \
+    -v "$(pwd)/data:/data" \
+    alpine sh -c "chown -R 1000:1000 /downloads /cookies /sessions /data" || echo "⚠️  Warning: Permission fix failed."
 
 # Run with host networking to avoid some DNS issues, or just standard bridge. 
 # Added :z to volumes for SELinux support (required on Fedora/CentOS/RHEL)
