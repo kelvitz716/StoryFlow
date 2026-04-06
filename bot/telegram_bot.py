@@ -693,7 +693,15 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # update.effective_message resolves to whichever is present.
     if not update.effective_message or not update.effective_message.text:
         return
-    
+
+    # When a channel post is published, Telegram creates TWO updates:
+    #   1. channel_post  → if we reply here, it creates a new CHANNEL POST (bad)
+    #   2. message       → auto-forwarded copy in the linked discussion group;
+    #                      replying here goes into the COMMENTS thread (good)
+    # We skip the channel_post update and let the group message handle everything.
+    if update.channel_post is not None:
+        return
+
     url = update.effective_message.text.strip()
 
     # Resolve sender identity.
