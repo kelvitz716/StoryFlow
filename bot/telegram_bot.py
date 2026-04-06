@@ -709,16 +709,14 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # Resolve sender identity.
     raw_user_id = str(update.effective_user.id) if update.effective_user else None
 
-    # Silently ignore Telegram-internal system senders (e.g. 777000).
-    if raw_user_id is not None and access_manager.is_system_sender(raw_user_id):
-        return
-
-    # Auto-forwarded channel posts arrive with from_user=None and sender_chat=channel.
-    # Use the CHANNEL ID for access checks so the admin whitelists the channel once
-    # via /adduser <channel_id> and ALL its posts are accepted automatically.
+    # Auto-forwarded channel posts arrive with from_user=Telegram (777000) and sender_chat=channel.
+    # Check this BEFORE filtering out system senders like 777000!
     if msg.is_automatic_forward and msg.sender_chat:
         user_id = str(msg.sender_chat.id)
         logging.info(f"📢 Auto-forward from channel {user_id} — using channel ID for access check")
+    elif raw_user_id is not None and access_manager.is_system_sender(raw_user_id):
+        # Silently ignore Telegram-internal system senders (e.g. 777000 for non-forwards).
+        return
     elif raw_user_id is None or access_manager.is_anonymous_sender(raw_user_id):
         # Generic anonymous sender (e.g. @GroupAnonymousBot) — fall back to chat ID.
         user_id = str(update.effective_chat.id)
