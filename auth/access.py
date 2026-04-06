@@ -9,6 +9,15 @@ from typing import Set, List
 class AccessManager:
     """Manages allowed users and admin access."""
 
+    # Telegram internal senders that should be silently ignored.
+    # 777000 = Telegram Service Account (system notifications, channel auth, etc.)
+    SYSTEM_IDS: set = {"777000"}
+
+    # Senders that represent an anonymous group/channel identity rather than a real
+    # user. The bot falls back to the chat ID for access checks in these cases.
+    # 1087968824 = @GroupAnonymousBot ("Send as group" / linked-channel posts)
+    ANONYMOUS_IDS: set = {"1087968824"}
+
     def __init__(self, admin_id: str, data_file: str = "data/allowed_users.json"):
         """
         Initialize the AccessManager.
@@ -48,6 +57,22 @@ class AccessManager:
     def is_admin(self, user_id: str) -> bool:
         """Check if a user is the admin."""
         return str(user_id) == self.admin_id
+
+    def is_system_sender(self, user_id: str) -> bool:
+        """Return True for Telegram-internal senders that should be silently ignored.
+
+        These are not real users and should never trigger access-denied messages
+        or be considered for the allowed-users list.
+        """
+        return str(user_id) in self.SYSTEM_IDS
+
+    def is_anonymous_sender(self, user_id: str) -> bool:
+        """Return True for senders that represent an anonymous group/channel identity.
+
+        When True, the caller should fall back to the *chat* ID for access-control
+        so that the group or channel can be whitelisted as a whole via /adduser.
+        """
+        return str(user_id) in self.ANONYMOUS_IDS
 
     def is_allowed(self, user_id: str) -> bool:
         """Check if a user is allowed to use the bot."""

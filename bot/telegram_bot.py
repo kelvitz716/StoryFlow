@@ -89,9 +89,9 @@ def requires_access(handler):
     @wraps(handler)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
-        
-        # Ignore Telegram Service messages
-        if user_id == "777000":
+
+        # Silently ignore Telegram-internal system senders (e.g. Telegram Service)
+        if access_manager and access_manager.is_system_sender(user_id):
             return
             
         # Check if access_manager is initialized and user is allowed
@@ -694,17 +694,31 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     
     url = update.message.text.strip()
-    user_id = str(update.effective_user.id)
-    
-    # [NEW] Access Check
-    if user_id == "777000":
-        return # Ignore Telegram Service messages
-        
+
+    # Resolve sender identity.
+    # Some senders are Telegram-internal and should be silently ignored.
+    # Others (e.g. @GroupAnonymousBot) are anonymous group/channel identities —
+    # fall back to the chat ID so the group can be whitelisted via /adduser.
+    raw_user_id = str(update.effective_user.id) if update.effective_user else None
+
+    if raw_user_id is None or access_manager.is_system_sender(raw_user_id):
+        return  # Silently ignore Telegram system senders
+
+    if access_manager.is_anonymous_sender(raw_user_id):
+        user_id = str(update.effective_chat.id)
+        logging.info(f"📢 Anonymous sender ({raw_user_id}) — using chat ID {user_id} for access check")
+    else:
+        user_id = raw_user_id
+
     if not access_manager.is_allowed(user_id):
         if access_manager.is_admin(user_id):
             pass # Admin is always allowed
         else:
-            await update.message.reply_text(f"⛔ Not authorized to use this bot (ID: `{user_id}`).", parse_mode='Markdown')
+            await update.message.reply_text(
+                f"⛔ Not authorized.\n"
+                f"Ask the admin to run: `/adduser {user_id}`",
+                parse_mode='Markdown'
+            )
             return
 
     # [NEW] Admin Input Handling
