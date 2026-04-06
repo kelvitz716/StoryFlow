@@ -90,6 +90,10 @@ def requires_access(handler):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         
+        # Ignore Telegram Service messages
+        if user_id == "777000":
+            return
+            
         # Check if access_manager is initialized and user is allowed
         if access_manager and not access_manager.is_allowed(user_id):
             await update.message.reply_text(
@@ -693,6 +697,9 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id = str(update.effective_user.id)
     
     # [NEW] Access Check
+    if user_id == "777000":
+        return # Ignore Telegram Service messages
+        
     if not access_manager.is_allowed(user_id):
         if access_manager.is_admin(user_id):
             pass # Admin is always allowed
