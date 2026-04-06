@@ -702,12 +702,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # fall back to the chat ID so the group can be whitelisted via /adduser.
     raw_user_id = str(update.effective_user.id) if update.effective_user else None
 
-    if raw_user_id is None or access_manager.is_system_sender(raw_user_id):
-        return  # Silently ignore Telegram system senders
+    # Silently ignore genuine Telegram system senders (e.g. 777000).
+    if raw_user_id is not None and access_manager.is_system_sender(raw_user_id):
+        return
 
-    if access_manager.is_anonymous_sender(raw_user_id):
+    # When effective_user is None (channel auto-forwarding to linked group) or the
+    # sender is the anonymous group bot, fall back to the chat ID so the group or
+    # channel can be whitelisted once via /adduser.
+    if raw_user_id is None or access_manager.is_anonymous_sender(raw_user_id):
         user_id = str(update.effective_chat.id)
-        logging.info(f"📢 Anonymous sender ({raw_user_id}) — using chat ID {user_id} for access check")
+        logging.info(f"📢 Channel/anonymous sender — using chat ID {user_id} for access check")
     else:
         user_id = raw_user_id
 
