@@ -14,6 +14,7 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    TypeHandler,
     filters,
     ContextTypes
 )
@@ -1566,6 +1567,17 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
         handle_auth_input
     ), group=-1)  # Higher priority than URL handler
     
+    async def log_all_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Debug logging for all updates."""
+        try:
+            # We use pretty-print to dump the update to the logs.
+            logging.info(f"📥 RAW UPDATE: {update.to_dict()}")
+        except Exception as e:
+            logging.error(f"Error logging update: {e}")
+
+    # Inject the debug logger before all other handlers
+    app.add_handler(TypeHandler(Update, log_all_events), group=-2)
+
     # URL handler — regular messages (groups, DMs, auto-forwarded channel posts)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'^https?://'),
