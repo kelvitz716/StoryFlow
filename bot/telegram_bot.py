@@ -726,8 +726,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
             return
 
-    # [NEW] Admin Input Handling
-    action = context.user_data.get('awaiting_action')
+    # Admin input handling — only applies for real users (context.user_data is None for channel posts)
+    action = context.user_data.get('awaiting_action') if context.user_data is not None else None
     if action and access_manager.is_admin(user_id):
         if action == 'add_user':
             target_id = url.strip()
