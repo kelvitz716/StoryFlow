@@ -695,7 +695,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     # When a channel post is published, Telegram creates TWO updates:
-    #   1. channel_post  → if we reply here, it creates a new CHANNEL POST (bad)
+    #   1. channel_post  → replying here posts a NEW channel message (bad)
     #   2. message       → auto-forwarded copy in the linked discussion group;
     #                      replying here goes into the COMMENTS thread (good)
     # We skip the channel_post update and let the group message handle everything.
@@ -703,31 +703,33 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     url = update.effective_message.text.strip()
+    msg = update.effective_message
 
     # Resolve sender identity.
-    # Some senders are Telegram-internal and should be silently ignored.
-    # Others (e.g. @GroupAnonymousBot) are anonymous group/channel identities —
-    # fall back to the chat ID so the group can be whitelisted via /adduser.
     raw_user_id = str(update.effective_user.id) if update.effective_user else None
 
-    # Silently ignore genuine Telegram system senders (e.g. 777000).
+    # Silently ignore Telegram-internal system senders (e.g. 777000).
     if raw_user_id is not None and access_manager.is_system_sender(raw_user_id):
         return
 
-    # When effective_user is None (channel auto-forwarding to linked group) or the
-    # sender is the anonymous group bot, fall back to the chat ID so the group or
-    # channel can be whitelisted once via /adduser.
-    if raw_user_id is None or access_manager.is_anonymous_sender(raw_user_id):
+    # Auto-forwarded channel posts arrive with from_user=None and sender_chat=channel.
+    # Use the CHANNEL ID for access checks so the admin whitelists the channel once
+    # via /adduser <channel_id> and ALL its posts are accepted automatically.
+    if msg.is_automatic_forward and msg.sender_chat:
+        user_id = str(msg.sender_chat.id)
+        logging.info(f"📢 Auto-forward from channel {user_id} — using channel ID for access check")
+    elif raw_user_id is None or access_manager.is_anonymous_sender(raw_user_id):
+        # Generic anonymous sender (e.g. @GroupAnonymousBot) — fall back to chat ID.
         user_id = str(update.effective_chat.id)
-        logging.info(f"📢 Channel/anonymous sender — using chat ID {user_id} for access check")
+        logging.info(f"📢 Anonymous sender — using chat ID {user_id} for access check")
     else:
         user_id = raw_user_id
 
     if not access_manager.is_allowed(user_id):
         if access_manager.is_admin(user_id):
-            pass # Admin is always allowed
+            pass  # Admin is always allowed
         else:
-            await update.effective_message.reply_text(
+            await msg.reply_text(
                 f"⛔ Not authorized.\n"
                 f"Ask the admin to run: `/adduser {user_id}`",
                 parse_mode='Markdown'
@@ -1564,12 +1566,12 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
         handle_auth_input
     ), group=-1)  # Higher priority than URL handler
     
-    # URL handler (text messages that look like URLs)
+    # URL handler — regular messages (groups, DMs, auto-forwarded channel posts)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'^https?://'),
         handle_url
     ))
-    
+
     # Document handler for cookie uploads
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
