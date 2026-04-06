@@ -219,7 +219,7 @@ class DownloadQueue:
                     
                     # Check storage before download
                     download_path = os.getenv('DOWNLOAD_PATH', './downloads')
-                    is_critical, current_usage = is_storage_critical(download_path, threshold=90.0)
+                    is_critical, current_usage = is_storage_critical(download_path, threshold=99.0)
                     
                     if is_critical:
                         logging.warning(f"🛑 Storage critical ({current_usage}%). Job {job.job_id} blocked.")
