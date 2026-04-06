@@ -688,12 +688,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle URL message."""
-    # Guard against None message (edited messages, channel posts, etc.)
-    if not update.message or not update.message.text:
-        logging.warning(f"Received update without message/text: {type(update)}")
+    # Guard: use effective_message so we handle both group messages and channel posts.
+    # update.message is None for channel posts — update.channel_post is set instead.
+    # update.effective_message resolves to whichever is present.
+    if not update.effective_message or not update.effective_message.text:
         return
     
-    url = update.message.text.strip()
+    url = update.effective_message.text.strip()
 
     # Resolve sender identity.
     # Some senders are Telegram-internal and should be silently ignored.
@@ -714,7 +715,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if access_manager.is_admin(user_id):
             pass # Admin is always allowed
         else:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"⛔ Not authorized.\n"
                 f"Ask the admin to run: `/adduser {user_id}`",
                 parse_mode='Markdown'
@@ -725,39 +726,39 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     action = context.user_data.get('awaiting_action')
     if action and access_manager.is_admin(user_id):
         if action == 'add_user':
-            target_id = url.strip() # In this context, url is just the text input
+            target_id = url.strip()
             if target_id.isdigit() or target_id.startswith('-'):
                 if access_manager.add_user(target_id):
-                    await update.message.reply_text(f"✅ User/Channel `{target_id}` added!")
+                    await update.effective_message.reply_text(f"✅ User/Channel `{target_id}` added!")
                 else:
-                    await update.message.reply_text(f"⚠️ User `{target_id}` is already allowed.")
+                    await update.effective_message.reply_text(f"⚠️ User `{target_id}` is already allowed.")
             else:
-                await update.message.reply_text("❌ Invalid ID format. Please send a numeric ID.")
+                await update.effective_message.reply_text("❌ Invalid ID format. Please send a numeric ID.")
             
             context.user_data.pop('awaiting_action', None)
-            await send_admin_menu(update.message, user_id)
+            await send_admin_menu(update.effective_message, user_id)
             return
 
         elif action == 'remove_user':
             target_id = url.strip()
             if access_manager.remove_user(target_id):
-                await update.message.reply_text(f"✅ User `{target_id}` removed.")
+                await update.effective_message.reply_text(f"✅ User `{target_id}` removed.")
             else:
-                await update.message.reply_text(f"⚠️ User `{target_id}` was not found.")
+                await update.effective_message.reply_text(f"⚠️ User `{target_id}` was not found.")
             
             context.user_data.pop('awaiting_action', None)
-            await send_admin_menu(update.message, user_id)
+            await send_admin_menu(update.effective_message, user_id)
             return
 
     if not is_supported_url(url):
-        await update.message.reply_text("🤔 Hmm, that doesn't look like a supported link. Try a Snapchat, Instagram, or TikTok link!")
+        await update.effective_message.reply_text("🤔 Hmm, that doesn't look like a supported link. Try a Snapchat, Instagram, or TikTok link!")
         return
     
     # Identify platform
     platform = identify_platform(url)
     
     if platform == "Unknown":
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "🤷 I don't recognize that platform!\n\n"
             "I work with:\n"
             "👻 Snapchat • 📸 Instagram • 🎵 TikTok\n"
@@ -767,7 +768,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     
     # Send processing message with fun text
     proc_msg = random.choice(PROCESSING_MSGS)
-    status_msg = await update.message.reply_text(f"{proc_msg}")
+    status_msg = await update.effective_message.reply_text(f"{proc_msg}")
     
     # Define download function based on platform
     async def download_func():
@@ -867,7 +868,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
                     if mtproto_client and mtproto_client.is_connected:
                         logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
                         chat_id = update.effective_chat.id
-                        message_id = update.message.message_id
+                        message_id = update.effective_message.message_id
                         # Mask for privacy
                         masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
                         logging.debug(f"📍 Extracted chat_id={masked_chat}, message_id={message_id}")
@@ -953,7 +954,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
             
             while not upload_success and retry_count < max_retry_attempts:
                 try:
-                    await update.message.reply_media_group(media=media_group)
+                    await update.effective_message.reply_media_group(media=media_group)
                     uploaded_count += len(valid_files)
                     upload_success = True
                     
@@ -1017,9 +1018,9 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
             try:
                 with open(filepath, 'rb') as f:
                     if file_type == 'photo':
-                        await update.message.reply_document(f, caption=f"📷 {os.path.basename(filepath)}")
+                        await update.effective_message.reply_document(f, caption=f"📷 {os.path.basename(filepath)}")
                     else:
-                        await update.message.reply_document(f, caption=f"📁 {os.path.basename(filepath)}")
+                        await update.effective_message.reply_document(f, caption=f"📁 {os.path.basename(filepath)}")
                     uploaded_count += 1
                     await asyncio.sleep(2)  # Increased delay for individual files
             except Exception as e:
@@ -1054,7 +1055,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
         
     # Send friendly closing message
     if failed_count == 0:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"Enjoy! ✨ Send another link whenever you're ready.",
             parse_mode='Markdown'
         )
