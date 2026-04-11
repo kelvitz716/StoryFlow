@@ -88,62 +88,52 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                         failed_count += 1
             continue
 
-        # Normal upload for Bot API
-        media_group = []
-        for file_path in batch:
-            if not os.path.exists(file_path): continue
-            
-            ext = os.path.splitext(file_path)[1].lower()
-            if ext in ('.jpg', '.jpeg', '.png', '.webp'):
-                media_group.append(InputMediaPhoto(media=open(file_path, 'rb')))
-            elif ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm'):
-                media_group.append(InputMediaVideo(media=open(file_path, 'rb')))
-        
-        if not media_group: continue
-            
         # Recursive-style retry loop for Bot API
         attempts = 0
         max_attempts = 3
         while attempts < max_attempts:
+            # Recreate media_group to ensure fresh, unread file handles per attempt
+            media_group = []
+            for file_path in batch:
+                if not os.path.exists(file_path): continue
+                
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext in ('.jpg', '.jpeg', '.png', '.webp'):
+                    media_group.append(InputMediaPhoto(media=open(file_path, 'rb')))
+                elif ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm'):
+                    media_group.append(InputMediaVideo(media=open(file_path, 'rb')))
+            
+            if not media_group: 
+                break
+
             try:
                 await safe_edit_text(status_msg, f"🚀 *Uploading...*\n(Batch {batch_idx+1}/{len(batches)})")
                 await update.effective_message.reply_media_group(media=media_group)
-                uploaded_count += len(media_group)
+                uploaded_count += len(batch)
                 break
             except RetryAfter as e:
                 attempts += 1
                 wait_time = e.retry_after + 1
                 logging.warning(f"⚠️ Flood control! Waiting {wait_time}s (Attempt {attempts}/{max_attempts})...")
                 
-                # FALLBACK IMMEDIATELY to MTProto on first rate limit if available
-                if mtproto_client and mtproto_client.is_connected:
-                    logging.info("🔄 Bot API throttled. Switching to MTProto rescue immediately.")
-                    await safe_edit_text(status_msg, f"🚀 *MTProto Rescue...*\n(Batch {batch_idx+1}/{len(batches)})")
-                    success = await mtproto_client.send_media_group(
-                        chat_id=update.effective_chat.id,
-                        files=batch,
-                        reply_to_message_id=update.effective_message.message_id
-                    )
-                    if success:
-                        uploaded_count += len(media_group)
-                        force_mtproto_fallback = True  # Maintain this sender for remaining batches
-                        break
-                
-                # Otherwise wait and try again
                 await safe_edit_text(status_msg, f"⏳ *Waiting...*\n({wait_time}s to resume)")
                 await asyncio.sleep(wait_time)
             except Exception as e:
                 logging.error(f"❌ Batch upload failed: {e}")
-                failed_count += len(media_group)
+                failed_count += len(batch)
                 break
             finally:
-                # Close file handles
+                # Close file handles safely
                 for media in media_group:
-                    if hasattr(media.media, 'close'): media.media.close()
+                    if hasattr(media.media, 'close'): 
+                        try:
+                            media.media.close()
+                        except:
+                            pass
         else:
             # Reached max attempts
-            failed_count += len(media_group)
-
+            failed_count += len(batch)
+            
     if failed_count > 0:
         await safe_edit_text(status_msg, 
             f"✅ Delivered {uploaded_count} files.\n"
