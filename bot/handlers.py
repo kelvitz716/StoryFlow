@@ -134,6 +134,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manag
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_help_menu(update.message, is_new_message=True)
 
+async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager, download_queue) -> None:
+    """Check the status of the background queue."""
+    user_id = str(update.effective_user.id)
+    if not access_manager.is_admin(user_id):
+        await update.message.reply_text("❌ You do not have permission to view the queue.")
+        return
+        
+    if not download_queue:
+        await update.message.reply_text("⚠️ Queue is not initialized.")
+        return
+        
+    # Get active jobs
+    pending = download_queue._queue.qsize()
+    active_jobs = [j for j in download_queue._jobs.values() if str(j.status.value) in ('downloading', 'uploading')]
+    
+    msg = (
+        f"📊 *Queue Status*\n\n"
+        f"🔄 *Active Jobs:* {len(active_jobs)}/{download_queue.max_concurrent}\n"
+        f"⏳ *Pending in Queue:* {pending}\n"
+    )
+    
+    if active_jobs:
+        msg += "\n*Current Work:*\n"
+        for job in active_jobs:
+            platform_emoji = get_platform_emoji(job.platform)
+            msg += f"- {platform_emoji} _{str(job.status.value).title()}_ (UID: `{job.user_id[-4:]}`)\n"
+            
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, cookie_manager: CookieManager) -> None:
     """Handle document (cookie file) upload."""
     document: Document = update.message.document

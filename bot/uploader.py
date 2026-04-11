@@ -61,7 +61,7 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         
         # Proactive cooling delay between batches to avoid rate limits
         if batch_idx > 0:
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(5)
 
         # Check for large files in batch
         large_files = [f for f in batch if os.path.exists(f) and os.path.getsize(f) > 5 * 1024 * 1024]

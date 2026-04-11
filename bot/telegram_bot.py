@@ -222,8 +222,10 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     app.bot_data['download_path'] = download_path
     
     # Handlers
+    from bot.handlers import queue_command
     app.add_handler(CommandHandler("start", lambda u, c: start(u, c, access_manager)))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("queue", lambda u, c: queue_command(u, c, access_manager, download_queue)))
     
     # Callback Query
     app.add_handler(CallbackQueryHandler(button_callback))
