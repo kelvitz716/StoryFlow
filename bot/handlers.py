@@ -40,6 +40,9 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     url = update.effective_message.text.strip()
     msg = update.effective_message
+    
+    # Clear any ghosted UI states when the user explicitly sends a new command/URL
+    context.user_data.pop('awaiting_cookies', None)
 
     # Resolve sender identity
     raw_user_id = str(update.effective_user.id) if update.effective_user else None

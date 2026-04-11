@@ -8,7 +8,9 @@ import logging
 from typing import Dict, Optional, Callable
 
 
-class GalleryDLDownloader:
+from downloaders.base import BaseDownloader
+
+class GalleryDLDownloader(BaseDownloader):
     """Handler for general media downloads using gallery-dl."""
     
     def __init__(self, output_path: str = './downloads', cookie_path: str = './cookies', admin_id: Optional[str] = None):
@@ -20,10 +22,9 @@ class GalleryDLDownloader:
             cookie_path: Directory containing cookie files
             admin_id: Admin User ID for fallback cookies
         """
-        self.output_path = output_path
+        super().__init__(output_path)
         self.cookie_path = cookie_path
         self.admin_id = admin_id
-        os.makedirs(output_path, exist_ok=True)
         os.makedirs(cookie_path, exist_ok=True)
     
     async def download(self, url: str, platform: str, user_id: Optional[str] = None, job_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
@@ -108,15 +109,14 @@ class GalleryDLDownloader:
                 'platform': platform
             }
     
-    def _get_download_files(self, path: Optional[str] = None) -> set:
-        """Get set of all files currently in specified directory."""
-        target_path = path or self.output_path
-        files = set()
-        for root, dirs, filenames in os.walk(target_path):
-            for filename in filenames:
-                if not filename.startswith('.'):  # Skip hidden files
-                    files.add(os.path.join(root, filename))
-        return files
+        except Exception as e:
+            logging.error(f"❌ Unexpected error: {e}")
+            return {
+                'success': False,
+                'error': 'Unexpected error',
+                'details': str(e),
+                'platform': platform
+            }
     
     async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
         """
@@ -260,179 +260,3 @@ class GalleryDLDownloader:
             return default_cookie
             
         return None
-    
-    async def _execute_with_retry(self, command: list, max_attempts: int = 3, progress_callback: Optional[Callable] = None) -> Dict:
-        """Execute command with retry logic (Async)."""
-        for attempt in range(1, max_attempts + 1):
-            process = None
-            stderr_text = ""
-            returncode = None
-            try:
-                # Async subprocess execution
-                process = await asyncio.create_subprocess_exec(
-                    *command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                
-                # Stream output for progress updates
-                stdout_lines = []
-                
-                try:
-                    while True:
-                        # Wait for line with timeout
-                        line = await asyncio.wait_for(process.stdout.readline(), timeout=300)
-                        if not line:
-                            break
-                            
-                        line_text = line.decode().strip()
-                        if line_text:
-                            stdout_lines.append(line_text)
-                            
-                            # Parse progress
-                            if progress_callback:
-                                # yt-dlp style: [download]  23.5% of ...
-                                if "[download]" in line_text and "%" in line_text:
-                                    # Extract percentage
-                                    try:
-                                        parts = line_text.split()
-                                        percent = next((p for p in parts if "%" in p), "0%")
-                                        if "ETA" in line_text:
-                                            eta = next((p for p in parts if ":" in p and len(p) <= 8 and p[0].isdigit()), "")
-                                            progress_callback(f"Downloading: {percent} (ETA {eta})")
-                                        else:
-                                            progress_callback(f"Downloading: {percent}")
-                                    except:
-                                        pass
-                                
-                                # gallery-dl style (usually just filenames)
-                                elif line_text.startswith('#'):
-                                    # Info lines
-                                    pass
-                                elif "." in line_text and "/" in line_text:
-                                    # Just say downloading...
-                                    progress_callback(f"Downloading: {os.path.basename(line_text)}")
-
-                    # Read remaining strings
-                    stderr_data = await process.stderr.read()
-                    
-                    stdout_text = "\n".join(stdout_lines)
-                    stderr_text = stderr_data.decode()
-                    
-                    await process.wait()
-                    returncode = process.returncode
-                    
-                    if returncode == 0:
-                        return {
-                            'success': True,
-                            'stdout': stdout_text,
-                            'stderr': stderr_text,
-                            'platform': 'gallery-dl'
-                        }
-                    else:
-                        raise ValueError(f"Process failed using status {process.returncode}")
-                        
-                except asyncio.TimeoutError:
-                    if process:
-                        try:
-                            process.kill()
-                        except:
-                            pass
-                    raise TimeoutError("Process exceeded 5 minutes")
-                
-            except (ValueError, TimeoutError) as e:
-                # Need to handle non-process errors or non-zero exits here
-                # Re-parse stderr from the failed process call if it was a non-zero exit
-                error_msg = str(e)
-                stderr_content = stderr_text
-                
-                if process is not None and returncode is None:
-                    returncode = process.returncode
-                
-                logging.warning(f"⚠️ Attempt {attempt}/{max_attempts} failed")
-                if stderr_content:
-                    logging.debug(f"STDERR: {stderr_content}")
-                
-                # Check if it's an authentication error
-                if 'login' in stderr_content.lower() or 'authentication' in stderr_content.lower():
-                    return {
-                        'success': False,
-                        'error': 'Authentication required',
-                        'details': 'Please provide cookies.txt file for Instagram',
-                        'stderr': stderr_content,
-                        'platform': 'gallery-dl'
-                    }
-                
-                # Check for 404 or content not found
-                if '404' in stderr_content or 'not found' in stderr_content.lower():
-                    return {
-                        'success': False,
-                        'error': 'Content not found',
-                        'details': 'The content may have been deleted or is private',
-                        'stderr': stderr_content,
-                        'platform': 'gallery-dl',
-                        'returncode': returncode
-                    }
-                
-                # Exit code 64 = extractor failure
-                if returncode == 64:
-                    return {
-                        'success': False,
-                        'error': 'Platform not supported or restricted',
-                        'details': 'This video may require login, be private, or from an unsupported format',
-                        'stderr': stderr_content,
-                        'platform': 'gallery-dl',
-                        'returncode': 64
-                    }
-
-                # Exit code 4 = No Downloads / Nothing found (User has no stories)
-                if returncode == 4:
-                    return {
-                        'success': False,
-                        'error': 'No active stories/spotlights found',
-                        'details': 'The user has no content available or it is private',
-                        'stderr': stderr_content,
-                        'platform': 'gallery-dl',
-                        'returncode': 4
-                    }
-                
-                # Retry on network errors
-                if attempt < max_attempts and self._is_retryable_error(stderr_content):
-                    wait_time = 2 ** attempt  # Exponential backoff
-                    logging.info(f"⏳ Retrying in {wait_time}s...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                
-                return {
-                    'success': False,
-                    'error': f'Download failed (code {returncode if returncode is not None else "?"})',
-                    'stderr': stderr_content,
-                    'platform': 'gallery-dl'
-                }
-                
-            except Exception as e:
-                logging.error(f"❌ Execution error: {e}")
-                return {
-                    'success': False,
-                    'error': f'Internal error: {e}',
-                    'platform': 'gallery-dl'
-                }
-        
-        return {
-            'success': False,
-            'error': 'Max retry attempts reached',
-            'platform': 'gallery-dl'
-        }
-    
-    def _is_retryable_error(self, stderr: str) -> bool:
-        """Check if error is retryable."""
-        retryable_keywords = [
-            'timeout',
-            'connection',
-            'network',
-            'temporary',
-            'rate limit',
-            'try again'
-        ]
-        stderr_lower = stderr.lower()
-        return any(keyword in stderr_lower for keyword in retryable_keywords)

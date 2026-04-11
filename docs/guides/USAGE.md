@@ -11,6 +11,7 @@ StoryFlow is a high-reliability bot designed for seamless media retrieval.
 | `/start` | Opens the main interactive dashboard. |
 | `/help` | Detailed usage instructions and platform tips. |
 | `/my_cookies` | Dashboard for managing Instagram/Facebook session files. |
+| `/queue` | (Admin) View live worker status and queued tasks dashboard. |
 | `/stats` | (Admin) View system health and storage metrics. |
 
 ### Downloading Media

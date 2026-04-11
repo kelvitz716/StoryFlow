@@ -19,23 +19,21 @@ Previously, synchronous `subprocess` calls would freeze the entire bot event loo
 - Synchronized UI updates using a centralized `JOB_MESSAGES` registry to avoid orphaned status messages.
 
 ### 4. Robust Rate Limiting & MTProto Rescue [RESOLVED]
-- **Smart Retries**: Batch Media Group uploads now strictly respect `RetryAfter` flood control from the Bot API.
-- **Failover**: Instant, automatic fallback to the MTProto User Client if the standard Bot API restricts bulk transfers.
-- **Status Guarding**: Bot status messages are now protected via `safe_edit_text` to prevent minor UI rate limits from crashing entire download jobs.
+- **Smart Retries**: Batch Media Group uploads now wait and natively retry without crashing out or jumping to Pyrogram for minimal delays.
+- **Failover**: Instant, automatic fallback to the MTProto User Client if the files are >50MB.
+- **Status Guarding**: Implemented a Time-Based UI Throttler (`safe_edit_text`) with an in-memory cache to mathematically prevent `429 Too Many Requests` storms caused by small text edits.
+- **API Request Spacing**: Decoupled UI updates from massive `sendMediaGroup` blasts via deliberate 5-second cooling delays to ensure Telegram burst limits are safely navigated.
+
+### 5. Increased Architecture Capacity [RESOLVED]
+- **Worker Scaling**: The global background engine has been scaled up to handle up to 5 concurrent worker threads simultaneously natively on AWS.
+- **User Queues**: Increased the `max_per_user` threshold to 10 instances allowing massive multi-batch queueing.
+- **Live Dashboard**: Added a `/queue` endpoint for live visibility into active workers and pending tasks without digging into logs.
 
 ---
 
 ## 🚀 Future Roadmap & Long-term Goals
 
-### 1. Robust Metadata Extraction
-- **Issue**: Currently, filenames are sometimes generic (e.g., `snapchat_timestamp.mp4`).
-- **Goal**: Extract platform-native metadata (captions, original authors) to improve filename accuracy and provide better delivery descriptions.
-
-### 2. Real-time Progress Tracking
-- **Goal**: Use Telegram's `edit_text` to show live download percentages for large files in the chat interface, similar to the existing storage monitoring.
-
-### 3. Distributed Workers
-- **Goal**: Allow the bot to delegate the actual download task to separate worker nodes via a message broker (e.g., Redis/RabbitMQ), enabling massive horizontal scaling.
+(No outstanding tasks currently identified for the core roadmap. System is operating at full functional capacity.)
 
 ---
 *Last updated: 2026-04-11*

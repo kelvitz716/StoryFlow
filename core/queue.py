@@ -63,8 +63,8 @@ class DownloadQueue:
     
     def __init__(
         self,
-        max_concurrent: int = 3,
-        max_per_user: int = 2,
+        max_concurrent: int = 5,
+        max_per_user: int = 10,
         status_callback: Optional[Callable] = None
     ):
         self.max_concurrent = max_concurrent
@@ -78,7 +78,6 @@ class DownloadQueue:
         
         self._queue: asyncio.Queue = asyncio.Queue()
         self._jobs: Dict[str, DownloadJob] = {}
-        self._user_jobs: Dict[str, list] = {}  # user_id -> [job_ids]
         self._workers: list = []
         self._running = False
         
@@ -140,18 +139,16 @@ class DownloadQueue:
             DownloadJob if queued, None if user limit reached
         """
         # Check user limit
-        user_jobs = self._user_jobs.get(user_id, [])
-        active_jobs = [j for j in user_jobs if self._jobs.get(j) and 
-                       self._jobs[j].status not in (JobStatus.COMPLETED, JobStatus.FAILED)]
+        active_jobs = [j for j in self._jobs.values() if j.user_id == user_id and 
+                       j.status not in (JobStatus.COMPLETED, JobStatus.FAILED)]
         
         if len(active_jobs) >= self.max_per_user:
             return None
         
         # Deduplication check: Is this URL already being processed for this user?
-        for jid in active_jobs:
-            existing_job = self._jobs.get(jid)
-            if existing_job and existing_job.url == url:
-                logging.info(f"♻️ Job {jid} already active for URL: {url} (User: {user_id})")
+        for existing_job in active_jobs:
+            if existing_job.url == url:
+                logging.info(f"♻️ Job {existing_job.job_id} already active for URL: {url} (User: {user_id})")
                 return existing_job
 
         # Create job
@@ -167,9 +164,6 @@ class DownloadQueue:
         
         # Track job
         self._jobs[job_id] = job
-        if user_id not in self._user_jobs:
-            self._user_jobs[user_id] = []
-        self._user_jobs[user_id].append(job_id)
         
         # Add to queue
         await self._queue.put((job, upload_func))
@@ -184,9 +178,8 @@ class DownloadQueue:
         return self._jobs.get(job_id)
     
     def get_user_jobs(self, user_id: str) -> list:
-        """Get all jobs for a user."""
-        job_ids = self._user_jobs.get(user_id, [])
-        return [self._jobs[jid] for jid in job_ids if jid in self._jobs]
+        """Get all active and tracked jobs for a user."""
+        return [j for j in self._jobs.values() if j.user_id == user_id]
     
     def get_queue_position(self, job_id: str) -> int:
         """Get position in queue (1-indexed, 0 if not in queue)."""
@@ -333,18 +326,7 @@ class DownloadQueue:
         """Remove job from tracking dictionaries and cleanup directory."""
         job = self._jobs.pop(job_id, None)
         if job:
-            user_id = job.user_id
-            
-            # 1. Remove from user tracking
-            if user_id in self._user_jobs:
-                try:
-                    self._user_jobs[user_id].remove(job_id)
-                    if not self._user_jobs[user_id]:
-                        del self._user_jobs[user_id]
-                except ValueError:
-                    pass
-            
-            # 2. Cleanup job directory
+            # Cleanup job directory
             if job.job_dir and os.path.exists(job.job_dir):
                 try:
                     import shutil
@@ -439,8 +421,8 @@ def get_queue() -> DownloadQueue:
 async def init_queue(
     snapchat_downloader,
     gallery_dl_downloader,
-    max_concurrent: int = 3,
-    max_per_user: int = 2,
+    max_concurrent: int = 5,
+    max_per_user: int = 10,
     status_callback: Optional[Callable] = None
 ):
     """Initialize and start the global download queue."""

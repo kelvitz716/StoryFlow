@@ -13,7 +13,9 @@ from core.storage import is_storage_critical
 from core.platform import extract_snapchat_username
 from core.security import sanitize_filename
 
-class SnapchatDownloader:
+from downloaders.base import BaseDownloader
+
+class SnapchatDownloader(BaseDownloader):
     """Handler for Snapchat downloads using SnapStory DL API."""
     
     def __init__(self, api_base_url: str, output_path: str = './downloads'):
@@ -24,8 +26,8 @@ class SnapchatDownloader:
             api_base_url: Base URL for SnapStory DL API
             output_path: Directory to save downloaded media
         """
+        super().__init__(output_path)
         self.api_base_url = api_base_url.rstrip('/')
-        self.output_path = output_path
         self.rate_limiter = RateLimiter(
             max_requests=int(os.getenv('MAX_REQUESTS_PER_MINUTE', 30))
         )
@@ -35,9 +37,6 @@ class SnapchatDownloader:
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         })
-        
-        # Ensure output directory exists
-        os.makedirs(output_path, exist_ok=True)
     
     async def download(self, url: str, user_id: Optional[str] = None, job_id: Optional[str] = None) -> Dict:
         """
