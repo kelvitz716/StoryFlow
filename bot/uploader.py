@@ -56,6 +56,9 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         batch_start = batch_idx * batch_size + 1
         batch_end = min((batch_idx + 1) * batch_size, total_files)
         
+        # Announce batch upload BEFORE the cooling delay to space out API calls
+        await safe_edit_text(status_msg, f"🚀 *Uploading...*\n(Batch {batch_idx+1}/{len(batches)})")
+        
         # Proactive cooling delay between batches to avoid rate limits
         if batch_idx > 0:
             await asyncio.sleep(1.5)
@@ -107,7 +110,6 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                 break
 
             try:
-                await safe_edit_text(status_msg, f"🚀 *Uploading...*\n(Batch {batch_idx+1}/{len(batches)})")
                 await update.effective_message.reply_media_group(media=media_group)
                 uploaded_count += len(batch)
                 break
