@@ -39,7 +39,7 @@ from bot.handlers import (
     handle_auth_input, get_auth_code, get_auth_password
 )
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES
 
 # Global Components
 snapchat: Optional[SnapchatDownloader] = None
@@ -48,9 +48,6 @@ cookie_manager: Optional[CookieManager] = None
 access_manager: Optional[AccessManager] = None
 mtproto_client: Optional[any] = None
 download_queue: Optional[DownloadQueue] = None
-
-# Job ID -> Status Message mapping
-JOB_MESSAGES = {}
 
 # MTProto Auth State (Shared with handlers)
 AUTH_PENDING = None

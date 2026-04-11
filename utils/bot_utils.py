@@ -1,7 +1,10 @@
 """Utility functions for the Telegram bot."""
 import re
 import logging
-from typing import Optional
+from typing import Optional, Dict
+
+# Global registry for job status messages (shared between handlers and bot entry point)
+JOB_MESSAGES: Dict[str, any] = {}
 
 def escape_markdown(text: str, version: int = 2) -> str:
     """
@@ -33,8 +36,8 @@ def format_error_message(error: str, platform: Optional[str] = None) -> str:
     error_lower = error.lower()
     if 'login' in error_lower or 'cookie' in error_lower or 'authentication' in error_lower:
         hint = "\n\n💡 *Hint:* This content may require login cookies. Try adding them in 'Manage Cookies'."
-    elif 'not found' in error_lower or '404' in error_lower:
-        hint = "\n\n💡 *Hint:* The link might be invalid or the content was deleted/private."
+    elif 'not found' in error_lower or '404' in error_lower or 'no active stories' in error_lower:
+        hint = "\n\n💡 *Hint:* The link might be invalid, or the user/content has no active public stories."
     elif 'rate limit' in error_lower:
         hint = "\n\n💡 *Hint:* Too many requests. Please wait a few minutes."
     else:

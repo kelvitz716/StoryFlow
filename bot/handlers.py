@@ -11,7 +11,7 @@ from auth.access import AccessManager
 from auth.cookies import CookieManager  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES
 import asyncio
 import time
 
@@ -22,8 +22,7 @@ PROCESSING_MSGS = [
     "⚡ One moment please..."
 ]
 
-# Global access to JOB_MESSAGES and AUTH state (mapped in main bot)
-JOB_MESSAGES = {}
+# MTProto Auth state (mapped in main bot)
 AUTH_PENDING = None
 AUTH_TYPE = None
 AUTH_ADMIN_ID = None

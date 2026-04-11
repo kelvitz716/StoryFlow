@@ -112,10 +112,10 @@ class SnapchatDownloader:
             
             if count == 0:
                 return {
-                    'success': True,
+                    'success': False,
                     'platform': 'Snapchat',
                     'username': username,
-                    'message': 'No active stories found',
+                    'error': 'No active public stories found',
                     'files': []
                 }
             

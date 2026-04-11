@@ -229,6 +229,7 @@ class DownloadQueue:
                     # Update status: downloading
                     job.status = JobStatus.DOWNLOADING
                     job.message = "Downloading content..."
+                    logging.info(f"⚙️ Job {job.job_id} status -> DOWNLOADING")
                     await self._notify_status(job)
                     
                     # Ensure job directory exists
