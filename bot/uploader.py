@@ -6,7 +6,6 @@ from typing import List, Optional
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.error import RetryAfter
 
-async def batch_upload_media(update: Update, files: List[str], status_msg, mtproto_client=None) -> None:
 async def safe_edit_text(message, text: str):
     """Safely edit a message, ignoring rate limits for secondary status updates."""
     try:
