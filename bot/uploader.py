@@ -29,6 +29,8 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
     uploaded_count = 0
     failed_count = 0
     
+    force_mtproto_fallback = False
+    
     for batch_idx, batch in enumerate(batches):
         batch_start = batch_idx * batch_size + 1
         batch_end = min((batch_idx + 1) * batch_size, total_files)
@@ -41,7 +43,7 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         large_files = [f for f in batch if os.path.exists(f) and os.path.getsize(f) > 5 * 1024 * 1024]
         
         # MTProto Fallback: Use it if forced (large files) OR if we previously hit rate limits
-        use_mtproto = bool(large_files and mtproto_client and mtproto_client.is_connected)
+        use_mtproto = force_mtproto_fallback or bool(large_files and mtproto_client and mtproto_client.is_connected)
         
         if use_mtproto:
             logging.info(f"📤 Batch {batch_idx+1} using MTProto rescue.")
@@ -103,6 +105,7 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                     )
                     if success:
                         uploaded_count += len(media_group)
+                        force_mtproto_fallback = True  # Maintain this sender for remaining batches
                         break
                 
                 # Otherwise wait and try again
