@@ -13,7 +13,7 @@ from pyrogram.errors import FloodWait
 
 def _ensure_pyrogram():
     """Import pyrogram only when needed to avoid early event loop errors."""
-    global PYROGRAM_AVAILABLE, Client
+    global PYROGRAM_AVAILABLE, Client, types
     if PYROGRAM_AVAILABLE is not None:
         return PYROGRAM_AVAILABLE
     
