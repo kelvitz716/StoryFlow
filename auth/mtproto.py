@@ -310,50 +310,63 @@ class MTProtoClient:
     ) -> bool:
         """
         Send a media group (album) using MTProto.
-        Handles FloodWait automatically.
+        Handles FloodWait automatically. Takes paths and opens them.
         """
         if not self.is_connected:
             return False
             
         _ensure_pyrogram()
         media = []
-        for file_path in files:
-            if not os.path.exists(file_path):
-                continue
+        file_handles = []
+        
+        try:
+            for file_path in files:
+                if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+                    continue
+                    
+                ext = os.path.splitext(file_path)[1].lower()
+                is_video = ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
                 
-            ext = os.path.splitext(file_path)[1].lower()
-            is_video = ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+                # Open the file buffer for robust Pyrogram upload
+                f = open(file_path, 'rb')
+                file_handles.append(f)
+                
+                if is_video:
+                    media.append(types.InputMediaVideo(media=f))
+                else:
+                    media.append(types.InputMediaPhoto(media=f))
             
-            if is_video:
-                media.append(types.InputMediaVideo(media=file_path))
-            else:
-                media.append(types.InputMediaPhoto(media=file_path))
-        
-        if not media:
-            return False
-
-        # Add caption to first item
-        if caption:
-            media[0].caption = caption
-
-        # Attempt upload with automatic flood wait logic
-        for attempt in range(3):
-            try:
-                await self.client.send_media_group(
-                    chat_id=chat_id,
-                    media=media,
-                    reply_to_message_id=reply_to_message_id
-                )
-                logging.info(f"✅ MTProto media group delivered ({len(media)} files)")
-                return True
-            except FloodWait as e:
-                logging.warning(f"⚠️ MTProto FloodWait: Sleeping {e.value}s (Attempt {attempt+1}/3)")
-                await asyncio.sleep(e.value)
-            except Exception as e:
-                logging.error(f"❌ MTProto media group failed: {e}")
+            if not media:
                 return False
-        
-        return False
+
+            # Add caption to first item
+            if caption:
+                media[0].caption = caption
+
+            # Attempt upload with automatic flood wait logic
+            for attempt in range(3):
+                try:
+                    await self.client.send_media_group(
+                        chat_id=chat_id,
+                        media=media,
+                        reply_to_message_id=reply_to_message_id
+                    )
+                    logging.info(f"✅ MTProto media group delivered ({len(media)} files)")
+                    return True
+                except FloodWait as e:
+                    logging.warning(f"⚠️ MTProto FloodWait: Sleeping {e.value}s (Attempt {attempt+1}/3)")
+                    await asyncio.sleep(e.value)
+                except Exception as e:
+                    logging.error(f"❌ MTProto media group failed: {e}")
+                    return False
+            return False
+        finally:
+            # Ensure all handles are closed securely
+            for f in file_handles:
+                try:
+                    f.close()
+                except Exception:
+                    pass
 
     async def _default_progress(self, current, total):
         """Default progress callback for uploads."""

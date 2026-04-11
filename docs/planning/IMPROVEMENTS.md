@@ -16,6 +16,12 @@ Previously, synchronous `subprocess` calls would freeze the entire bot event loo
 
 ### 3. Modular Bot Architecture [RESOLVED]
 - Refactored the monolithic `telegram_bot.py` into specialized modules (`bot/`, `utils/`), significantly improving code readability and making 24/7 AWS maintenance easier.
+- Synchronized UI updates using a centralized `JOB_MESSAGES` registry to avoid orphaned status messages.
+
+### 4. Robust Rate Limiting & MTProto Rescue [RESOLVED]
+- **Smart Retries**: Batch Media Group uploads now strictly respect `RetryAfter` flood control from the Bot API.
+- **Failover**: Instant, automatic fallback to the MTProto User Client if the standard Bot API restricts bulk transfers.
+- **Status Guarding**: Bot status messages are now protected via `safe_edit_text` to prevent minor UI rate limits from crashing entire download jobs.
 
 ---
 

@@ -19,6 +19,7 @@ graph TD
     
     Worker -->|Success/Files| Uploader[bot/uploader.py]
     Uploader -->|Small Files <50MB| TelegramAPI[Telegram Bot API]
+    TelegramAPI -.->|Rate Limit / FloodWait| MTProto
     Uploader -->|Large Files >50MB| MTProto[MTProto Client (Pyrogram)]
 ```
 
@@ -28,7 +29,7 @@ graph TD
 Modularized for high-performance interaction and maintainability.
 - `handlers.py`: Command routing and message processing.
 - `menus.py`: UI layout, keyboards, and navigation flow.
-- `uploader.py`: Media batching, delivery logic, and MTProto integration.
+- `uploader.py`: Media batching, delivery logic, and MTProto fallback (rescues rate-limited transfers).
 - `telegram_bot.py`: Main entry point and orchestration.
 
 ### 2. Core Logic (`core/`)

@@ -141,6 +141,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
     
     awaiting_platform = context.user_data.get('awaiting_cookies')
     if not awaiting_platform:
+        # Silently ignore non-.txt documents (like media files uploaded by MTProto)
+        if not document.file_name or not document.file_name.endswith('.txt'):
+            return
+            
         await update.message.reply_text("📎 I wasn't expecting a cookie file. Go to 'Manage Cookies' first.")
         return
     

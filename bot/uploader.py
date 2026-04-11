@@ -6,13 +6,34 @@ from typing import List, Optional
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.error import RetryAfter
 
+import time
+
+LAST_EDIT_TIMES = {}
+EDIT_THROTTLE_SECONDS = 3.5
+
 async def safe_edit_text(message, text: str):
-    """Safely edit a message, ignoring rate limits for secondary status updates."""
+    """Safely edit a message, throttling UI updates to avoid cascading rate limits."""
+    current_time = time.time()
+    msg_id = message.message_id
+    
+    # Lightweight Garbage Collection to prevent memory leaks
+    if len(LAST_EDIT_TIMES) > 100:
+        cutoff = current_time - 3600 # 1 hour
+        keys_to_delete = [k for k, v in LAST_EDIT_TIMES.items() if v < cutoff]
+        for k in keys_to_delete:
+            del LAST_EDIT_TIMES[k]
+    
+    # Throttle check
+    if msg_id in LAST_EDIT_TIMES:
+        if (current_time - LAST_EDIT_TIMES[msg_id]) < EDIT_THROTTLE_SECONDS:
+            return  # Skip update to protect API quotas
+
     try:
         await message.edit_text(text, parse_mode='Markdown')
+        LAST_EDIT_TIMES[msg_id] = time.time()
     except RetryAfter as e:
-        # Ignore rate limits for status updates to prioritize actual file delivery
-        logging.warning(f"🤫 Status update throttled (waiting {e.retry_after}s), skipping.")
+        logging.warning(f"🤫 Status update throttled by Telegram (waiting {e.retry_after}s), skipping.")
+        LAST_EDIT_TIMES[msg_id] = current_time + e.retry_after
     except Exception as e:
         logging.debug(f"ℹ️ Status update failed: {e}")
 

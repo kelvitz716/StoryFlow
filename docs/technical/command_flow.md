@@ -54,7 +54,9 @@ graph TD
     StatusDown -->|Success| Uploading[Action: bot/uploader.py]
     StatusDown -->|Fail| FinalCleanup[Action: Delete job_id/]
     
+    Uploading -->|Rate Limit / FloodWait| MTProto[Failover to MTProto User API]
     Uploading -->|Complete| FinalCleanup
+    MTProto -->|Complete| FinalCleanup
     FinalCleanup --> FinalMsg[✅ Delivery Complete]
 ```
 
