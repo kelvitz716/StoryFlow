@@ -7,6 +7,17 @@ from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.error import RetryAfter
 
 async def batch_upload_media(update: Update, files: List[str], status_msg, mtproto_client=None) -> None:
+async def safe_edit_text(message, text: str):
+    """Safely edit a message, ignoring rate limits for secondary status updates."""
+    try:
+        await message.edit_text(text, parse_mode='Markdown')
+    except RetryAfter as e:
+        # Ignore rate limits for status updates to prioritize actual file delivery
+        logging.warning(f"🤫 Status update throttled (waiting {e.retry_after}s), skipping.")
+    except Exception as e:
+        logging.debug(f"ℹ️ Status update failed: {e}")
+
+async def batch_upload_media(update: Update, files: List[str], status_msg, mtproto_client=None) -> None:
     """
     Upload media files in batches using Telegram media groups.
     
@@ -34,10 +45,10 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         use_mtproto = bool(large_files and mtproto_client and mtproto_client.is_connected)
         
         if use_mtproto:
-            logging.info(f"📤 Batch {batch_idx+1} using MTProto (Large files or rate-limit fallback).")
-            await status_msg.edit_text(f"🚀 *Delivering via MTProto...*\n(Batch {batch_idx+1}/{len(batches)})", parse_mode='Markdown')
+            logging.info(f"📤 Batch {batch_idx+1} using MTProto rescue.")
+            await safe_edit_text(status_msg, f"🚀 *MTProto Delivery...*\n(Batch {batch_idx+1}/{len(batches)})")
             
-            # Use MTProto Media Group if possible, otherwise individual
+            # Use MTProto Media Group
             success = await mtproto_client.send_media_group(
                 chat_id=update.effective_chat.id,
                 files=batch,
@@ -73,7 +84,7 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         max_attempts = 3
         while attempts < max_attempts:
             try:
-                await status_msg.edit_text(f"🚀 *Uploading...*\n(Batch {batch_idx+1}/{len(batches)})", parse_mode='Markdown')
+                await safe_edit_text(status_msg, f"🚀 *Uploading...*\n(Batch {batch_idx+1}/{len(batches)})")
                 await update.effective_message.reply_media_group(media=media_group)
                 uploaded_count += len(media_group)
                 break
@@ -81,12 +92,11 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                 attempts += 1
                 wait_time = e.retry_after + 1
                 logging.warning(f"⚠️ Flood control! Waiting {wait_time}s (Attempt {attempts}/{max_attempts})...")
-                await status_msg.edit_text(f"⏳ *Rate Limited*\nWaiting {wait_time}s to resume...", parse_mode='Markdown')
-                await asyncio.sleep(wait_time)
                 
-                # After 2 failures, try falling back to MTProto if available
-                if attempts >= 2 and mtproto_client and mtproto_client.is_connected:
-                    logging.info("🔄 Switching to MTProto fallback due to persistent rate limiting.")
+                # FALLBACK IMMEDIATELY to MTProto on first rate limit if available
+                if mtproto_client and mtproto_client.is_connected:
+                    logging.info("🔄 Bot API throttled. Switching to MTProto rescue immediately.")
+                    await safe_edit_text(status_msg, f"🚀 *MTProto Rescue...*\n(Batch {batch_idx+1}/{len(batches)})")
                     success = await mtproto_client.send_media_group(
                         chat_id=update.effective_chat.id,
                         files=batch,
@@ -94,9 +104,13 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                     )
                     if success:
                         uploaded_count += len(media_group)
-                        break # Success via fallback
+                        break
+                
+                # Otherwise wait and try again
+                await safe_edit_text(status_msg, f"⏳ *Waiting...*\n({wait_time}s to resume)")
+                await asyncio.sleep(wait_time)
             except Exception as e:
-                logging.error(f"❌ Failed to upload batch: {e}")
+                logging.error(f"❌ Batch upload failed: {e}")
                 failed_count += len(media_group)
                 break
             finally:
@@ -108,11 +122,10 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
             failed_count += len(media_group)
 
     if failed_count > 0:
-        await status_msg.edit_text(
+        await safe_edit_text(status_msg, 
             f"✅ Delivered {uploaded_count} files.\n"
-            f"⚠️ {failed_count} files failed to upload.\n\n"
-            f"💡 *Tip:* Large batches are subject to strict Telegram limits."
-        , parse_mode='Markdown')
+            f"⚠️ {failed_count} files failed to upload."
+        )
     else:
         try:
             await status_msg.delete()
