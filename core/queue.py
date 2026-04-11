@@ -68,9 +68,8 @@ class DownloadQueue:
     ):
         self.max_concurrent = max_concurrent
         self.max_per_user = max_per_user
-        self.max_concurrent = max_concurrent
-        self.max_per_user = max_per_user
         self.status_callback = status_callback
+        self.download_path = os.getenv('DOWNLOAD_PATH', './downloads')
         
         # Downloaders (set later or via init)
         self.snapchat = None
@@ -120,8 +119,6 @@ class DownloadQueue:
         
         Args:
             user_id: Telegram user ID
-            url: URL to download
-            platform: Platform name (Snapchat, Instagram, etc.)
             url: URL to download
             platform: Platform name (Snapchat, Instagram, etc.)
             
@@ -180,6 +177,8 @@ class DownloadQueue:
         """Get position in queue (1-indexed, 0 if not in queue)."""
         # This is approximate since we can't peek into asyncio.Queue
         job = self._jobs.get(job_id)
+        
+        # If job was recently cleaned up or is no longer queued, return 0
         if not job or job.status != JobStatus.QUEUED:
             return 0
         
@@ -218,12 +217,12 @@ class DownloadQueue:
                     await self._notify_status(job)
                     
                     # Check storage before download
-                    download_path = os.getenv('DOWNLOAD_PATH', './downloads')
-                    is_critical, current_usage = is_storage_critical(download_path, threshold=99.0)
+                    is_critical, current_usage = is_storage_critical(self.download_path, threshold=99.0)
                     
                     if is_critical:
                         logging.warning(f"🛑 Storage critical ({current_usage}%). Job {job.job_id} blocked.")
                         job.status = JobStatus.FAILED
+                        job.completed_at = datetime.now()
                         job.error = f"Storage Full ({current_usage}%)"
                         job.message = "Disk space is almost full. Purge system to continue."
                         await self._notify_status(job)
@@ -257,6 +256,7 @@ class DownloadQueue:
                     
                     if not result.get('success'):
                         job.status = JobStatus.FAILED
+                        job.completed_at = datetime.now()
                         job.error = result.get('error', 'Download failed')
                         job.message = f"Failed: {job.error}"
                         await self._notify_status(job)
@@ -266,6 +266,7 @@ class DownloadQueue:
                     
                     if not job.files:
                         job.status = JobStatus.COMPLETED
+                        job.completed_at = datetime.now()
                         job.message = result.get('message', 'No content found')
                         await self._notify_status(job)
                         continue
@@ -287,13 +288,17 @@ class DownloadQueue:
                 except Exception as e:
                     logging.error(f"Job {job.job_id} failed: {e}")
                     job.status = JobStatus.FAILED
+                    job.completed_at = datetime.now()
                     job.error = str(e)
                     job.message = f"Error: {e}"
                     await self._notify_status(job)
                 
                 finally:
+                    # Clean up completed/failed job from tracking to prevent memory leak
+                    if job and job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+                        self._cleanup_job(job.job_id)
                     self._queue.task_done()
-                    
+            
             except asyncio.CancelledError:
                 break
             except RuntimeError as e:
@@ -303,6 +308,19 @@ class DownloadQueue:
                 break
             except Exception as e:
                 logging.error(f"Worker {worker_id} error: {e}")
+    
+    def _cleanup_job(self, job_id: str):
+        """Remove job from tracking dictionaries."""
+        job = self._jobs.pop(job_id, None)
+        if job:
+            user_id = job.user_id
+            if user_id in self._user_jobs:
+                try:
+                    self._user_jobs[user_id].remove(job_id)
+                    if not self._user_jobs[user_id]:
+                        del self._user_jobs[user_id]
+                except ValueError:
+                    pass
     
     async def _notify_status(self, job: DownloadJob):
         """Call status callback if set."""

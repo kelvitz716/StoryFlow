@@ -1,6 +1,7 @@
 """Gallery-dl wrapper for Instagram, TikTok, Twitter, and Facebook downloads."""
 
 import os
+import re
 import time
 import asyncio
 import logging
@@ -49,30 +50,27 @@ class GalleryDLDownloader:
             # Execute gallery-dl with retry logic (Async)
             result = await self._execute_with_retry(command, progress_callback=progress_callback)
             
+            # Find new files after gallery-dl attempt
+            files_after = self._get_download_files()
+            new_files = [f for f in files_after if f not in files_before]
+            
             if result['success']:
-                # Find new files
-                files_after = self._get_download_files()
-                new_files = [f for f in files_after if f not in files_before]
-                
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded successfully! ({len(new_files)} files)")
                     result['files'] = new_files
                     return result
                 
                 # Check for cached files (if any were already in the folder)
-                all_files = list(files_after)
-                if all_files:
-                    logging.info(f"📂 Content already downloaded, returning {len(all_files)} cached file(s)")
-                    result['files'] = all_files
+                # Defensive: Only return files that likely belong to this URL to prevent leakage
+                match_files = self._filter_files_by_url(url, files_after)
+                if match_files:
+                    logging.info(f"📂 Found {len(match_files)} potentially cached files for this ID")
+                    result['files'] = match_files
                     return result
                 
-                logging.warning(f"⚠️ No files found after gallery-dl success.")
+                logging.warning(f"⚠️ No new or cached files found after gallery-dl success.")
             
-            # If we are here, it's either result['success'] is False OR it's True but no files were found.
             # Check for partial success (files downloaded despite error)
-            files_after = self._get_download_files()
-            new_files = [f for f in files_after if f not in files_before]
-            
             if new_files:
                 # TikTok specific: Images often download fine but audio fails. Treat this as success/feature.
                 logging.info(f"✅ {platform} images downloaded successfully (despite stderr)")
@@ -85,7 +83,7 @@ class GalleryDLDownloader:
             fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram"]
             if platform in fallback_platforms:
                 logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before)
+                fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before, files_after)
                 if fallback_result and fallback_result['success']:
                     return fallback_result
                 elif fallback_result:
@@ -115,7 +113,7 @@ class GalleryDLDownloader:
                     files.add(os.path.join(root, filename))
         return files
     
-    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
+    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], files_before: set, files_mid: Optional[set] = None, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).
         
@@ -123,7 +121,8 @@ class GalleryDLDownloader:
             url: Media URL
             platform: Platform name
             user_id: User ID for cookie lookup
-            files_before: Set of files before download
+            files_before: Set of files before request started
+            files_mid: Set of files after gallery-dl attempt (Optimization)
             
         Returns:
             Dict with download result
@@ -156,6 +155,9 @@ class GalleryDLDownloader:
             if result['success']:
                 # Find new files
                 files_after = self._get_download_files()
+                
+                # Use files_before as baseline to capture all files new since request start, 
+                # regardless of which downloader produced them.
                 new_files = [f for f in files_after if f not in files_before]
                 
                 if new_files:
@@ -256,6 +258,9 @@ class GalleryDLDownloader:
     async def _execute_with_retry(self, command: list, max_attempts: int = 3, progress_callback: Optional[Callable] = None) -> Dict:
         """Execute command with retry logic (Async)."""
         for attempt in range(1, max_attempts + 1):
+            process = None
+            stderr_text = ""
+            returncode = None
             try:
                 # Async subprocess execution
                 process = await asyncio.create_subprocess_exec(
@@ -266,7 +271,6 @@ class GalleryDLDownloader:
                 
                 # Stream output for progress updates
                 stdout_lines = []
-                stderr_lines = []
                 
                 try:
                     while True:
@@ -310,8 +314,9 @@ class GalleryDLDownloader:
                     stderr_text = stderr_data.decode()
                     
                     await process.wait()
+                    returncode = process.returncode
                     
-                    if process.returncode == 0:
+                    if returncode == 0:
                         return {
                             'success': True,
                             'stdout': stdout_text,
@@ -322,14 +327,21 @@ class GalleryDLDownloader:
                         raise ValueError(f"Process failed using status {process.returncode}")
                         
                 except asyncio.TimeoutError:
-                    process.kill()
+                    if process:
+                        try:
+                            process.kill()
+                        except:
+                            pass
                     raise TimeoutError("Process exceeded 5 minutes")
                 
             except (ValueError, TimeoutError) as e:
                 # Need to handle non-process errors or non-zero exits here
                 # Re-parse stderr from the failed process call if it was a non-zero exit
                 error_msg = str(e)
-                stderr_content = stderr_text if 'stderr_text' in locals() else ""
+                stderr_content = stderr_text
+                
+                if process is not None and returncode is None:
+                    returncode = process.returncode
                 
                 logging.warning(f"⚠️ Attempt {attempt}/{max_attempts} failed")
                 if stderr_content:
@@ -353,11 +365,11 @@ class GalleryDLDownloader:
                         'details': 'The content may have been deleted or is private',
                         'stderr': stderr_content,
                         'platform': 'gallery-dl',
-                        'returncode': process.returncode if 'process' in locals() else None
+                        'returncode': returncode
                     }
                 
                 # Exit code 64 = extractor failure
-                if 'returncode' in locals() and process.returncode == 64:
+                if returncode == 64:
                     return {
                         'success': False,
                         'error': 'Platform not supported or restricted',
@@ -368,7 +380,7 @@ class GalleryDLDownloader:
                     }
 
                 # Exit code 4 = No Downloads / Nothing found (User has no stories)
-                if 'returncode' in locals() and process.returncode == 4:
+                if returncode == 4:
                     return {
                         'success': False,
                         'error': 'No active stories/spotlights found',
@@ -387,7 +399,7 @@ class GalleryDLDownloader:
                 
                 return {
                     'success': False,
-                    'error': f'Download failed (code {process.returncode if "process" in locals() else "?"})',
+                    'error': f'Download failed (code {returncode if returncode is not None else "?"})',
                     'stderr': stderr_content,
                     'platform': 'gallery-dl'
                 }
@@ -418,3 +430,47 @@ class GalleryDLDownloader:
         ]
         stderr_lower = stderr.lower()
         return any(keyword in stderr_lower for keyword in retryable_keywords)
+
+    def _filter_files_by_url(self, url: str, files: set) -> list:
+        """
+        Attempt to find files that belong to a specific URL/ID.
+        This is a best-effort defense against returning the wrong user's files.
+        """
+        # Try to find common ID patterns in URLs
+        # Instagram: /p/ABC123/ or /reel/ABC123/ or /stories/user/123/
+        # TikTok: /video/123
+        # Twitter: /status/123
+        # Snapchat: /add/user or /p/123
+        
+        # Extract potential IDs (alphanumeric, at least 5 chars)
+        potential_ids = re.findall(r'([a-zA-Z0-9_\-]{5,})', url.lower())
+        
+        # Filter out common structural tokens that would cause false positives
+        structural_tokens = {
+            'https', 'http', 'www', 'instagram', 'facebook', 'tiktok', 'twitter', 
+            'snapchat', 'reels', 'reel', 'status', 'stories', 'story', 'video', 
+            'videos', 'photo', 'photos', 'image', 'images', 'download', 'downloads',
+            'media', 'posts', 'post', 'added'
+        }
+        potential_ids = [pid for pid in potential_ids if pid not in structural_tokens]
+        
+        if not potential_ids:
+            return []
+            
+        matches = []
+        for filepath in files:
+            filename = os.path.basename(filepath).lower()
+            # Check if any ID from the URL is in the filename
+            if any(pid in filename for pid in potential_ids):
+                matches.append(filepath)
+        
+        # If no matches by ID, but they are all in a subfolder named after the user/ID
+        if not matches:
+             for filepath in files:
+                filepath_lower = filepath.lower()
+                for pid in potential_ids:
+                    if pid in filepath_lower:
+                        matches.append(filepath)
+                        break
+
+        return matches

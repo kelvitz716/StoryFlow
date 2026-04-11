@@ -342,7 +342,7 @@ async def send_help_menu(target, is_new_message: bool = True):
         await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
-async def send_cookies_menu(target, user_id: str):
+async def send_cookies_menu(target, user_id: str, is_new_message: bool = False):
     """Send the cookie management menu."""
     # Check existing cookies
     cookies = cookie_manager.list_cookies(user_id) if cookie_manager else []
@@ -371,10 +371,13 @@ async def send_cookies_menu(target, user_id: str):
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
     
-    await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
-async def send_admin_menu(target, user_id: str):
+async def send_admin_menu(target, user_id: str, is_new_message: bool = False):
     """Send the admin tools menu."""
     if not access_manager.is_admin(user_id):
         return
@@ -394,10 +397,10 @@ async def send_admin_menu(target, user_id: str):
     ])
     
     # Check if target is message or callback query
-    if hasattr(target, 'edit_message_text'):
-        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    else:
+    if is_new_message:
         await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
 
@@ -416,7 +419,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_help_menu(query, is_new_message=False)
     
     elif query.data == "menu_cookies":
-        await send_cookies_menu(query, user_id)
+        await send_cookies_menu(query, user_id, is_new_message=False)
     
     elif query.data == "menu_stats":
         stats = stats_manager.get_user_stats(user_id)
@@ -440,7 +443,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
     elif query.data == "menu_admin":
-        await send_admin_menu(query, user_id)
+        await send_admin_menu(query, user_id, is_new_message=False)
 
     elif query.data == "admin_list":
         users = access_manager.get_allowed_users()
@@ -579,48 +582,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # ============= COOKIE MANAGEMENT =============
     
-    elif query.data == "cookies_instagram":
-        context.user_data['awaiting_cookies'] = 'instagram'
+    elif query.data.startswith("cookies_"):
+        platform = query.data.replace("cookies_", "")
+        context.user_data['awaiting_cookies'] = platform
+        
+        platform_info = {
+            'instagram': ('📸', 'Instagram', 'instagram.com'),
+            'facebook': ('📘', 'Facebook', 'facebook.com'),
+            'tiktok': ('🎵', 'TikTok', 'tiktok.com')
+        }
+        emoji, title, domain = platform_info.get(platform, ('🍪', platform.title(), f'{platform}.com'))
+        
         text = (
-            "📸 *Upload Instagram Cookies*\n\n"
-            "Send me your `cookies.txt` file from Instagram.\n\n"
+            f"{emoji} *Upload {title} Cookies*\n\n"
+            f"Send me your `cookies.txt` file from {title}.\n\n"
             "*How to get it:*\n"
             "1. Install 'Get cookies.txt' extension\n"
-            "2. Go to instagram.com (logged in)\n"
-            "3. Export cookies\n"
-            "4. Send the file here\n\n"
-            "_Waiting for your file..._"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="menu_cookies")],
-        ])
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    
-    elif query.data == "cookies_facebook":
-        context.user_data['awaiting_cookies'] = 'facebook'
-        text = (
-            "📘 *Upload Facebook Cookies*\n\n"
-            "Send me your `cookies.txt` file from Facebook.\n\n"
-            "*How to get it:*\n"
-            "1. Install 'Get cookies.txt' extension\n"
-            "2. Go to facebook.com (logged in)\n"
-            "3. Export cookies\n"
-            "4. Send the file here\n\n"
-            "_Waiting for your file..._"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="menu_cookies")],
-        ])
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    
-    elif query.data == "cookies_tiktok":
-        context.user_data['awaiting_cookies'] = 'tiktok'
-        text = (
-            "🎵 *Upload TikTok Cookies*\n\n"
-            "Send me your `cookies.txt` file from TikTok.\n\n"
-            "*How to get it:*\n"
-            "1. Install 'Get cookies.txt' extension\n"
-            "2. Go to tiktok.com (logged in)\n"
+            f"2. Go to {domain} (logged in)\n"
             "3. Export cookies\n"
             "4. Send the file here\n\n"
             "_Waiting for your file..._"
@@ -631,18 +609,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
     
     elif query.data == "menu_delete_cookies":
-        text = (
-            "🗑️ *Delete Cookies*\n\n"
-            "Which cookies would you like to delete?"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📸 Instagram", callback_data="delete_instagram"),
-             InlineKeyboardButton("📘 Facebook", callback_data="delete_facebook")],
-            [InlineKeyboardButton("🎵 TikTok", callback_data="delete_tiktok")],
-            [InlineKeyboardButton("⚠️ Delete All", callback_data="delete_all")],
-            [InlineKeyboardButton("⬅️ Back", callback_data="menu_cookies")],
-        ])
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+        await send_delete_cookies_menu(query)
     
     elif query.data == "delete_instagram":
         deleted = cookie_manager.delete_cookie_file(user_id, "instagram")
@@ -763,16 +730,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await send_admin_menu(update.effective_message, user_id)
             return
 
-    if not is_supported_url(url):
-        await update.effective_message.reply_text("🤔 Hmm, that doesn't look like a supported link. Try a Snapchat, Instagram, or TikTok link!")
-        return
-    
     # Identify platform
     platform = identify_platform(url)
     
     if platform == "Unknown":
         await update.effective_message.reply_text(
-            "🤷 I don't recognize that platform!\n\n"
+            "🤔 Hmm, I don't recognize that link or platform!\n\n"
             "I work with:\n"
             "👻 Snapchat • 📸 Instagram • 🎵 TikTok\n"
             "🐦 Twitter/X • 📘 Facebook"
@@ -783,26 +746,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     proc_msg = random.choice(PROCESSING_MSGS)
     status_msg = await update.effective_message.reply_text(f"{proc_msg}")
     
-    # Define download function based on platform
-    async def download_func():
-        try:
-            if platform == "Snapchat":
-                # Check if it's a Spotlight link (public video)
-                if "/spotlight/" in url:
-                    logging.info("🔦 Detected Snapchat Spotlight link, using gallery-dl...")
-                    return await gallery_dl.download(url, platform, user_id)
-                
-                # Otherwise treat as User Stories
-                username = extract_snapchat_username(url)
-                if not username:
-                    return {'success': False, 'error': 'Invalid Snapchat link'}
-                return snapchat.download_stories(username)
-            else:
-                # Instagram, TikTok, Twitter, Facebook
-                return await gallery_dl.download(url, platform, user_id)
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-
     # Define upload function
     async def upload_func(files):
         await batch_upload_media(update, files, status_msg)
@@ -865,188 +808,205 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
         media_group = []
         valid_files = []
         files_to_send_individually = []  # Files that can't be in media group
+        open_file_handles = []
         
-        # Supported extensions for media groups
-        photo_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
-        video_exts = ('.mp4', '.mov', '.webm', '.avi', '.mkv', '.m4v')
-        
-        for idx, filepath in enumerate(batch):
-            try:
-                file_size = os.path.getsize(filepath)
-                file_ext = os.path.splitext(filepath)[1].lower()
-                
-                # 45MB limit (Bot API max is 50MB) - try MTProto for larger files for reliability
-                if file_size > 45 * 1024 * 1024:
-                    # Try MTProto for large files
-                    if mtproto_client and mtproto_client.is_connected:
-                        logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
-                        chat_id = update.effective_chat.id
-                        message_id = update.effective_message.message_id
-                        # Mask for privacy
-                        masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
-                        logging.debug(f"📍 Extracted chat_id={masked_chat}, message_id={message_id}")
-                        
-                        # Progress callback
-                        last_upload_update = 0
-                        async def upload_progress(current, total):
-                            nonlocal last_upload_update
-                            current_time = time.time()
-                            if current_time - last_upload_update < 2.0:
-                                return
-                            last_upload_update = current_time
-                            percent = (current / total) * 100
-                            try:
-                                await status_msg.edit_text(
-                                    f"📤 Uploading large file via MTProto...\n"
-                                    f"File: {os.path.basename(filepath)}\n"
-                                    f"Progress: {percent:.1f}%"
-                                )
-                            except Exception:
-                                pass
+        try:
+            # Supported extensions for media groups
+            photo_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+            video_exts = ('.mp4', '.mov', '.webm', '.avi', '.mkv', '.m4v')
+            
+            for idx, filepath in enumerate(batch):
+                try:
+                    file_size = os.path.getsize(filepath)
+                    file_ext = os.path.splitext(filepath)[1].lower()
+                    
+                    # 45MB limit (Bot API max is 50MB) - try MTProto for larger files for reliability
+                    if file_size > 45 * 1024 * 1024:
+                        # Try MTProto for large files
+                        if mtproto_client and mtproto_client.is_connected:
+                            logging.info(f"📤 Large file ({file_size / 1024 / 1024:.1f}MB), using MTProto...")
+                            chat_id = update.effective_chat.id
+                            message_id = update.effective_message.message_id
+                            # Mask for privacy
+                            masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
+                            logging.debug(f"📍 Extracted chat_id={masked_chat}, message_id={message_id}")
+                            
+                            # Progress callback
+                            last_upload_update = 0
+                            async def upload_progress(current, total):
+                                nonlocal last_upload_update
+                                current_time = time.time()
+                                if current_time - last_upload_update < 2.0:
+                                    return
+                                last_upload_update = current_time
+                                percent = (current / total) * 100
+                                try:
+                                    await status_msg.edit_text(
+                                        f"📤 Uploading large file via MTProto...\n"
+                                        f"File: {os.path.basename(filepath)}\n"
+                                        f"Progress: {percent:.1f}%"
+                                    )
+                                except Exception:
+                                    pass
 
-                        success = await mtproto_client.upload_file(
-                            chat_id, filepath, caption="",
-                            reply_to_message_id=message_id,
-                            progress_callback=upload_progress
-                        )
-                        if success:
-                            uploaded_count += 1
-                            # Cleanup after successful upload
+                            success = await mtproto_client.upload_file(
+                                chat_id, filepath, caption="",
+                                reply_to_message_id=message_id,
+                                progress_callback=upload_progress
+                            )
+                            if success:
+                                uploaded_count += 1
+                                # Cleanup after successful upload
+                                try:
+                                    os.remove(filepath)
+                                    logging.debug(f"Cleaned up: {filepath}")
+                                except:
+                                    pass
+                            else:
+                                failed_count += 1
+                        else:
+                            logging.warning(f"File too large (>50MB) and MTProto not available: {filepath}")
+                            failed_count += 1
+                        continue
+                    
+                    if file_ext in photo_exts:
+                        # Photos have 10MB limit in media groups
+                        if file_size > 10 * 1024 * 1024:
+                            # Send as document instead
+                            files_to_send_individually.append(('photo', filepath))
+                        else:
+                            f = open(filepath, 'rb')
+                            open_file_handles.append(f)
+                            media_group.append(InputMediaPhoto(media=f))
+                            valid_files.append(filepath)
+                            
+                    elif file_ext in video_exts:
+                        f = open(filepath, 'rb')
+                        open_file_handles.append(f)
+                        media_group.append(InputMediaVideo(media=f))
+                        valid_files.append(filepath)
+                        
+                    else:
+                        # Send unknown file types as documents individually
+                        files_to_send_individually.append(('document', filepath))
+                        
+                except Exception as e:
+                    logging.error(f"Error preparing file {filepath}: {e}")
+                    failed_count += 1
+                    continue
+            
+            if not media_group and not files_to_send_individually:
+                continue
+            
+            # Add caption to first item in batch (if we have a media group)
+            if media_group:
+                start_num = batch_start
+                end_num = start_num + len(valid_files) - 1
+                caption = f"📸 Stories {start_num}-{end_num} of {total_files}"
+                media_group[0] = type(media_group[0])(
+                    media=media_group[0].media,
+                    caption=caption
+                )
+            
+            # Send media group with improved retry logic for flood control
+            if media_group:
+                upload_success = False
+                retry_count = 0
+                max_retry_attempts = 5  # Increased from 3
+                
+                while not upload_success and retry_count < max_retry_attempts:
+                    try:
+                        await update.effective_message.reply_media_group(media=media_group)
+                        uploaded_count += len(valid_files)
+                        upload_success = True
+                        
+                        # Cleanup: Delete files after successful upload
+                        for filepath in valid_files:
                             try:
                                 os.remove(filepath)
                                 logging.debug(f"Cleaned up: {filepath}")
-                            except:
-                                pass
-                        else:
-                            failed_count += 1
-                    else:
-                        logging.warning(f"File too large (>50MB) and MTProto not available: {filepath}")
-                        failed_count += 1
-                    continue
-                
-                if file_ext in photo_exts:
-                    # Photos have 10MB limit in media groups
-                    if file_size > 10 * 1024 * 1024:
-                        # Send as document instead
-                        files_to_send_individually.append(('photo', filepath))
-                    else:
-                        media_group.append(InputMediaPhoto(media=open(filepath, 'rb')))
-                        valid_files.append(filepath)
+                            except Exception as e:
+                                logging.warning(f"Failed to cleanup {filepath}: {e}")
                         
-                elif file_ext in video_exts:
-                    media_group.append(InputMediaVideo(media=open(filepath, 'rb')))
-                    valid_files.append(filepath)
-                    
-                else:
-                    # Send unknown file types as documents individually
-                    files_to_send_individually.append(('document', filepath))
-                    
-            except Exception as e:
-                logging.error(f"Error preparing file {filepath}: {e}")
-                failed_count += 1
-                continue
-        
-        if not media_group and not files_to_send_individually:
-            continue
-        
-        # Add caption to first item in batch (if we have a media group)
-        if media_group:
-            start_num = batch_start
-            end_num = start_num + len(valid_files) - 1
-            caption = f"📸 Stories {start_num}-{end_num} of {total_files}"
-            media_group[0] = type(media_group[0])(
-                media=media_group[0].media,
-                caption=caption
-            )
-        
-        # Send media group with improved retry logic for flood control
-        if media_group:
-            upload_success = False
-            retry_count = 0
-            max_retry_attempts = 5  # Increased from 3
+                        logging.info(f"✅ Successfully uploaded batch {batch_idx + 1}/{len(batches)}")
+                        
+                    except RetryAfter as e:
+                        retry_count += 1
+                        wait_time = e.retry_after
+                        logging.warning(f"⏳ FloodWait triggered: waiting {wait_time}s (attempt {retry_count}/{max_retry_attempts})")
+                        
+                        try:
+                            await status_msg.edit_text(
+                                f"⏳ Telegram rate limit hit! Waiting {wait_time}s...\n"
+                                f"Batch {batch_idx + 1}/{len(batches)} • Attempt {retry_count}/{max_retry_attempts}\n"
+                                f"Don't worry, I'll retry automatically! 🔄"
+                            )
+                        except Exception:
+                            pass  # Ignore if status update fails
+                        
+                        await asyncio.sleep(wait_time + 2)  # Wait requested time + buffer
+                        
+                    except Exception as e:
+                        retry_count += 1
+                        
+                        # Check if it's a flood-related error
+                        error_str = str(e).lower()
+                        if 'flood' in error_str or 'retry' in error_str or '429' in error_str:
+                            wait_time = 30 + (retry_count * 10)  # Exponential backoff
+                            logging.warning(f"⏳ Possible flood control (attempt {retry_count}): waiting {wait_time}s - {e}")
+                            
+                            try:
+                                await status_msg.edit_text(
+                                    f"⏳ Rate limit detected! Waiting {wait_time}s...\n"
+                                    f"Batch {batch_idx + 1}/{len(batches)} • Attempt {retry_count}/{max_retry_attempts}"
+                                )
+                            except Exception:
+                                pass
+                            
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # Non-flood error - log and break
+                            logging.error(f"❌ Error sending media group batch {batch_idx + 1}: {e}")
+                            failed_count += len(valid_files)
+                            break
+                
+                # If we exhausted retries without success
+                if not upload_success and retry_count >= max_retry_attempts:
+                    logging.error(f"❌ Failed to upload batch {batch_idx + 1} after {max_retry_attempts} attempts")
+                    failed_count += len(valid_files)
             
-            while not upload_success and retry_count < max_retry_attempts:
+            # Send files that couldn't be in the media group individually
+            for file_type, filepath in files_to_send_individually:
                 try:
-                    await update.effective_message.reply_media_group(media=media_group)
-                    uploaded_count += len(valid_files)
-                    upload_success = True
-                    
-                    # Cleanup: Delete files after successful upload
-                    for filepath in valid_files:
+                    with open(filepath, 'rb') as f:
+                        if file_type == 'photo':
+                            await update.effective_message.reply_document(f, caption=f"📷 {os.path.basename(filepath)}")
+                        else:
+                            await update.effective_message.reply_document(f, caption=f"📁 {os.path.basename(filepath)}")
+                        uploaded_count += 1
+                        await asyncio.sleep(2)  # Increased delay for individual files
+                except Exception as e:
+                    logging.error(f"Error sending individual file {filepath}: {e}")
+                    failed_count += 1
+                finally:
+                    # Cleanup individual file
+                    if os.path.exists(filepath):
                         try:
                             os.remove(filepath)
                             logging.debug(f"Cleaned up: {filepath}")
                         except Exception as e:
                             logging.warning(f"Failed to cleanup {filepath}: {e}")
-                    
-                    logging.info(f"✅ Successfully uploaded batch {batch_idx + 1}/{len(batches)}")
-                    
-                except RetryAfter as e:
-                    retry_count += 1
-                    wait_time = e.retry_after
-                    logging.warning(f"⏳ FloodWait triggered: waiting {wait_time}s (attempt {retry_count}/{max_retry_attempts})")
-                    
-                    try:
-                        await status_msg.edit_text(
-                            f"⏳ Telegram rate limit hit! Waiting {wait_time}s...\\n"
-                            f"Batch {batch_idx + 1}/{len(batches)} • Attempt {retry_count}/{max_retry_attempts}\\n"
-                            f"Don't worry, I'll retry automatically! 🔄"
-                        )
-                    except Exception:
-                        pass  # Ignore if status update fails
-                    
-                    await asyncio.sleep(wait_time + 2)  # Wait requested time + buffer
-                    
-                except Exception as e:
-                    retry_count += 1
-                    
-                    # Check if it's a flood-related error
-                    error_str = str(e).lower()
-                    if 'flood' in error_str or 'retry' in error_str or '429' in error_str:
-                        wait_time = 30 + (retry_count * 10)  # Exponential backoff
-                        logging.warning(f"⏳ Possible flood control (attempt {retry_count}): waiting {wait_time}s - {e}")
-                        
-                        try:
-                            await status_msg.edit_text(
-                                f"⏳ Rate limit detected! Waiting {wait_time}s...\\n"
-                                f"Batch {batch_idx + 1}/{len(batches)} • Attempt {retry_count}/{max_retry_attempts}"
-                            )
-                        except Exception:
-                            pass
-                        
-                        await asyncio.sleep(wait_time)
-                    else:
-                        # Non-flood error - log and break
-                        logging.error(f"❌ Error sending media group batch {batch_idx + 1}: {e}")
-                        failed_count += len(valid_files)
-                        break
-            
-            # If we exhausted retries without success
-            if not upload_success and retry_count >= max_retry_attempts:
-                logging.error(f"❌ Failed to upload batch {batch_idx + 1} after {max_retry_attempts} attempts")
-                failed_count += len(valid_files)
         
-        # Send files that couldn't be in the media group individually
-        for file_type, filepath in files_to_send_individually:
-            try:
-                with open(filepath, 'rb') as f:
-                    if file_type == 'photo':
-                        await update.effective_message.reply_document(f, caption=f"📷 {os.path.basename(filepath)}")
-                    else:
-                        await update.effective_message.reply_document(f, caption=f"📁 {os.path.basename(filepath)}")
-                    uploaded_count += 1
-                    await asyncio.sleep(2)  # Increased delay for individual files
-            except Exception as e:
-                logging.error(f"Error sending individual file {filepath}: {e}")
-                failed_count += 1
-            finally:
-                # Cleanup individual file
-                if os.path.exists(filepath):
-                    try:
-                        os.remove(filepath)
-                        logging.debug(f"Cleaned up: {filepath}")
-                    except Exception as e:
-                        logging.warning(f"Failed to cleanup {filepath}: {e}")
+        except Exception as e:
+            logging.error(f"❌ Critical error in batch processing: {e}")
+            failed_count += len(batch) # Rough estimate
+        finally:
+            # Ensure ALL open handles from this batch are closed
+            for f in open_file_handles:
+                try:
+                    f.close()
+                except Exception as e:
+                    logging.warning(f"Failed to close file handle: {e}")
         
         # Progressive delay between batches to avoid flood control
         if batch_idx < len(batches) - 1:
@@ -1096,30 +1056,7 @@ async def batch_upload_media(update: Update, files: list, status_msg) -> None:
 async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /upload_cookies command - show cookie menu."""
     user_id = str(update.effective_user.id)
-    cookies = cookie_manager.list_cookies(user_id) if cookie_manager else []
-    
-    if cookies:
-        lines = ["🍪 *Your Cookies*\n"]
-        for c in cookies:
-            emoji = "📸" if c['platform'] == 'instagram' else "📘"
-            status = "⚠️ Expired" if c.get('is_expired') else "✅ Active"
-            lines.append(f"{emoji} {c['platform'].title()}: {status}")
-            lines.append(f"   📅 {c.get('expiry_str', 'Unknown')}\n")
-        text = "\n".join(lines)
-    else:
-        text = (
-            "🍪 *Cookie Manager*\n\n"
-            "No cookies yet! Add some to unlock private content."
-        )
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📸 Add Instagram", callback_data="cookies_instagram"),
-         InlineKeyboardButton("📘 Add Facebook", callback_data="cookies_facebook")],
-        [InlineKeyboardButton("🎵 Add TikTok", callback_data="cookies_tiktok")],
-        [InlineKeyboardButton("🗑️ Delete Cookies", callback_data="menu_delete_cookies")],
-        [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
-    ])
-    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    await send_cookies_menu(update.message, user_id, is_new_message=True)
 
 
 @requires_access
@@ -1131,6 +1068,12 @@ async def list_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @requires_access
 async def delete_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /delete_cookies command."""
+    await send_delete_cookies_menu(update.message)
+
+
+async def send_delete_cookies_menu(target):
+    """Unified delete cookies menu."""
+    text = "🗑️ *Delete Cookies*\n\nWhich cookies would you like to delete?"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Instagram", callback_data="delete_instagram"),
          InlineKeyboardButton("📘 Facebook", callback_data="delete_facebook")],
@@ -1138,30 +1081,17 @@ async def delete_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("⚠️ Delete All", callback_data="delete_all")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
-    await update.message.reply_text(
-        "🗑️ *Delete Cookies*\n\nWhich cookies would you like to delete?",
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
+    
+    if hasattr(target, 'edit_message_text'):
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 
 # Queue status command available when queue is enabled
 # async def queue_status(update, context): ...
 
 
-def is_supported_url(url: str) -> bool:
-    """Strictly validate that the URL belongs to a supported domain."""
-    import re
-    supported_domains = [
-        r'https?://(www\.)?snapchat\.com/.*',
-        r'https?://(www\.)?instagram\.com/.*',
-        r'https?://(www\.)?tiktok\.com/.*',
-        r'https?://vm\.tiktok\.com/.*',
-        r'https?://(www\.)?(twitter\.com|x\.com)/.*',
-        r'https?://(www\.)?facebook\.com/.*',
-        r'https?://fb\.watch/.*'
-    ]
-    return any(re.match(pattern, url, re.IGNORECASE) for pattern in supported_domains)
 
 
 async def handle_auth_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1523,7 +1453,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
         try:
             if update and isinstance(update, Update) and update.effective_message:
                 await update.effective_message.reply_text(
-                    "⚠️ *Oops! Something went wrong.*\\n\\n"
+                    "⚠️ *Oops! Something went wrong.*\n\n"
                     "The error has been logged. Please try again or contact support if the issue persists.",
                     parse_mode='Markdown'
                 )
@@ -1542,8 +1472,6 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("upload_cookies", upload_cookies))
-    app.add_handler(CommandHandler("my_cookies", list_cookies))
     app.add_handler(CommandHandler("upload_cookies", upload_cookies))
     app.add_handler(CommandHandler("my_cookies", list_cookies))
     app.add_handler(CommandHandler("delete_cookies", delete_cookies))
@@ -1569,7 +1497,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
         """Debug logging for all updates."""
         try:
             # We use pretty-print to dump the update to the logs.
-            logging.info(f"📥 RAW UPDATE: {update.to_dict()}")
+            logging.debug(f"📥 RAW UPDATE: {update.to_dict()}")
         except Exception as e:
             logging.error(f"Error logging update: {e}")
 
