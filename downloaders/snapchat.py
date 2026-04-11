@@ -39,9 +39,14 @@ class SnapchatDownloader:
         # Ensure output directory exists
         os.makedirs(output_path, exist_ok=True)
     
-    async def download(self, url: str, user_id: Optional[str] = None) -> Dict:
+    async def download(self, url: str, user_id: Optional[str] = None, job_id: Optional[str] = None) -> Dict:
         """
         Adapter method for Queue compatibility.
+        
+        Args:
+            url: Snapchat URL
+            user_id: Telegram user ID
+            job_id: Unique job identifier for directory isolation
         """
         # Spotlight links are public and might be handled differently, 
         # but for now we try to extract username or handle special cases
@@ -70,19 +75,24 @@ class SnapchatDownloader:
         # Simple fix: wrap in asyncio.to_thread for Py3.9+ or run_in_executor
         import asyncio
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.download_stories, username)
+        return await loop.run_in_executor(None, self.download_stories, username, job_id)
     
-    def download_stories(self, username: str) -> Dict:
+    def download_stories(self, username: str, job_id: Optional[str] = None) -> Dict:
         """
         Download all Snapchat stories for a username.
         
         Args:
             username: Snapchat username
+            job_id: Unique job identifier for directory isolation
             
         Returns:
             Dict containing status and download information
         """
         self.rate_limiter.wait_if_needed()
+        
+        # Determine job-specific output path
+        job_output_path = os.path.join(self.output_path, job_id) if job_id else self.output_path
+        os.makedirs(job_output_path, exist_ok=True)
         
         try:
             # Fetch story metadata from API
@@ -127,7 +137,8 @@ class SnapchatDownloader:
                     username=username,
                     index=i,
                     media_type=media_type,
-                    timestamp=timestamp
+                    timestamp=timestamp,
+                    output_path=job_output_path
                 )
                 
                 if filename:
@@ -135,7 +146,7 @@ class SnapchatDownloader:
                     logging.info(f"✅ Downloaded story {i}/{count}: {os.path.basename(filename)}")
                     
                     # Security/Stability check: stop if storage hits critical levels during bulk download
-                    is_critical, current_usage = is_storage_critical(self.output_path, threshold=90.0)
+                    is_critical, current_usage = is_storage_critical(job_output_path, threshold=90.0)
                     if is_critical:
                         logging.warning(f"⚠️ Storage threshold reached ({current_usage}%). Stopping download for @{username}.")
                         return {
@@ -213,7 +224,8 @@ class SnapchatDownloader:
         username: str,
         index: int,
         media_type: int,
-        timestamp: str
+        timestamp: str,
+        output_path: str
     ) -> Optional[str]:
         """Download individual media file."""
         try:
@@ -225,7 +237,7 @@ class SnapchatDownloader:
             ts = timestamp if timestamp else int(time.time())
             safe_username = sanitize_filename(username)
             filename = os.path.join(
-                self.output_path,
+                output_path,
                 f"snapchat_{safe_username}_{ts}_{index}.{extension}"
             )
             

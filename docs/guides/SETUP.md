@@ -2,32 +2,14 @@
 
 ## Prerequisites
 
-- **Python 3.12** is recommended.
+- **Python 3.11/3.12** is recommended.
 - **FFmpeg** (required for media merging/converting).
 - **Git**.
+- **Docker** (Recommended for deployment).
 
-## System Dependencies
+## Deployment (Recommended: Docker + deploy.sh)
 
-1.  **Install FFmpeg**:
-    ```bash
-    # Fedora
-    sudo dnf install ffmpeg
-    
-    # Ubuntu/Debian
-    sudo apt install ffmpeg
-    ```
-
-2.  **Install gallery-dl** (System-wide recommended):
-    ```bash
-    sudo pip install -U gallery-dl
-    ```
-
-3.  **Install yt-dlp** (System-wide recommended):
-    ```bash
-    sudo pip install -U yt-dlp
-    ```
-
-## Installation
+For 24/7 cloud operation (like AWS), using Docker is the most reliable way to ensure stability and isolate dependencies.
 
 1.  **Clone the repository**:
     ```bash
@@ -35,76 +17,53 @@
     cd StoryFlow
     ```
 
-2.  **Set up Python Environment**:
+2.  **Run the deployment script**:
     ```bash
-    # Create virtual environment
-    python3.12 -m venv venv312
-    
-    # Activate it
-    source venv312/bin/activate
+    chmod +x deploy.sh
+    ./deploy.sh
+    ```
+    This script will:
+    - Interactive prompt you for configuration.
+    - Create the `.env` file automatically.
+    - Set up the necessary data volumes with correct permissions.
+    - Build and start the StoryFlow Docker container.
+
+3.  **Monitor Logs**:
+    ```bash
+    docker logs -f storyflow_app
     ```
 
-3.  **Install Python Dependencies**:
+## Manual Installation (Optional)
+
+If you prefer to run directly on your host:
+
+1.  **Install FFmpeg**:
     ```bash
+    # Ubuntu/Debian
+    sudo apt install ffmpeg
+    ```
+
+2.  **Set up Python Environment**:
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
     pip install -r requirements.txt
     ```
 
-## Configuration
+3.  **Configure `.env`**:
+    Manually create `.env` from `.env.example` and fill in:
+    - `TELEGRAM_BOT_TOKEN`: From @BotFather.
+    - `ADMIN_USER_ID`: Your Telegram ID (to authorize commands).
+    - `MODE=telegram`: To run the bot.
 
-1.  **Environment Variables**:
-    Copy the example configuration:
-    ```bash
-    cp .env.example .env
-    ```
-
-2.  **Edit `.env`**:
-    Open `.env` and fill in your credentials:
-    
-    ```ini
-    # Telegram Bot Token (from @BotFather)
-    TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-    
-    # Run Mode
-    MODE=telegram
-    
-    # [Optional] MTProto Setup for files > 50MB
-    # Get these from https://my.telegram.org -> API Development Tools
-    TELEGRAM_API_ID=12345678
-    TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
-    ```
-
-## Running the Bot
-
-1.  **Activate Environment** (if not already active):
-    ```bash
-    source venv312/bin/activate
-    ```
-
-2.  **Start the Bot**:
+4.  **Start the Bot**:
     ```bash
     python storyflow.py
     ```
 
-3.  **First Run (MTProto)**:
-    If you configured `TELEGRAM_API_ID`, the bot will ask for your phone number and OTP code on the first run to authorize the session. This session is saved locally in `sessions/`.
+## MTProto Setup (Large Files)
 
-## Running as Systemd Service (Optional)
+To support files > 50MB, you must provide `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. On the first startup, the bot will ask for an OTP code in the terminal to authorize the session.
 
-Create a service file `/etc/systemd/system/storyflow.service`:
-
-```ini
-[Unit]
-Description=StoryFlow Telegram Bot
-After=network.target
-
-[Service]
-Type=simple
-User=youruser
-WorkingDirectory=/path/to/StoryFlow
-ExecStart=/path/to/StoryFlow/venv312/bin/python storyflow.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+> [!TIP]
+> **2FA**: If you have 2FA enabled, you will also need to enter your Cloud Password in the terminal or via the bot's admin menu.

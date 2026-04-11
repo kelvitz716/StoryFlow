@@ -209,13 +209,14 @@ class SnapchatDownloader:
         })
     
     @create_retry_decorator()
-    def download_story(self, url: str, output_path: str = './downloads') -> Dict:
+    async def download(self, url: str, user_id: Optional[str] = None, job_id: Optional[str] = None) -> Dict:
         """
-        Download Snapchat story using SnapStory DL API.
+        Download Snapchat story using SnapStory DL API (Async).
         
         Args:
             url: Snapchat story URL
-            output_path: Directory to save downloaded media
+            user_id: Telegram user ID
+            job_id: Unique job identifier for directory isolation
             
         Returns:
             Dict containing status and media information
@@ -331,18 +332,23 @@ class GalleryDLDownloader:
         os.makedirs(output_path, exist_ok=True)
         os.makedirs(cookie_path, exist_ok=True)
     
-    def download(self, url: str, platform: str, user_id: Optional[str] = None) -> Dict:
+    async def download(self, url: str, platform: str, user_id: Optional[str] = None, job_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
         """
-        Download media using gallery-dl with optional cookie support.
+        Download media using gallery-dl with job isolation (Async).
         
         Args:
             url: Media URL
             platform: Platform name (Instagram, TikTok, etc.)
-            user_id: User ID for cookie lookup (Telegram user ID)
+            user_id: User ID for cookie lookup
+            job_id: Unique job identifier
+            progress_callback: Optional callback for status updates
             
         Returns:
             Dict containing status and download information
         """
+        # Determine job-specific output path
+        job_output_path = os.path.join(self.output_path, job_id) if job_id else self.output_path
+        os.makedirs(job_output_path, exist_ok=True)
         try:
             command = self._build_command(url, platform, user_id)
             
@@ -644,151 +650,28 @@ if __name__ == "__main__":
 
 ---
 
-## 9. Telegram Bot Integration
+### 9.1 Modular Application Structure
 
-### 9.1 Bot Handler with Cookie Upload
+The bot is divided into several modules to improve maintainability:
+
+1.  `bot/handlers.py`: Command routing and specialized input handling (URLs, auth, documents).
+2.  `bot/menus.py`: Inline keyboard generation and navigation flow.
+3.  `bot/uploader.py`: Media batching, delivery logic, and MTProto support.
+4.  `bot/telegram_bot.py`: Entry point and component orchestration.
+
+### 9.2 Download Job Flow
 
 ```python
-from telegram import Update, Document
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes
-)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send welcome message."""
-    await update.message.reply_text(
-        "🎬 *StoryFlow Media Downloader*\n\n"
-        "Send me a URL from:\n"
-        "• Snapchat\n"
-        "• Instagram\n"
-        "• TikTok\n"
-        "• Twitter/X\n"
-        "• Facebook\n\n"
-        "For Instagram private content, send /upload_cookies first.",
-        parse_mode='Markdown'
-    )
-
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle URL message."""
-    url = update.message.text.strip()
-    user_id = str(update.effective_user.id)
+    # ... identification logic ...
     
-    # Identify platform
-    platform = identify_platform(url)
-    
-    if platform == "Error":
-        await update.message.reply_text("❌ Invalid URL format")
-        return
-    
-    if platform == "Unknown":
-        await update.message.reply_text("🚫 Unsupported platform")
-        return
-    
-    # Send processing message
-    status_msg = await update.message.reply_text("⏳ Processing...")
-    
-    try:
-        # Download based on platform
-        if platform == "Snapchat":
-            result = snapchat.download_story(url)
-        else:
-            result = gallery_dl.download(url, platform, user_id)
-        
-        # Handle result
-        if result['success']:
-            await status_msg.edit_text("✅ Download complete! Uploading...")
-            
-            # Upload file to Telegram
-            if result.get('filename'):
-                with open(result['filename'], 'rb') as f:
-                    await update.message.reply_video(f)
-                await status_msg.delete()
-        else:
-            error_msg = result.get('error', 'Unknown error')
-            
-            if error_msg == 'Authentication required':
-                await status_msg.edit_text(
-                    "🔒 Authentication required for Instagram.\n\n"
-                    "Please use /upload_cookies to upload your cookies.txt file.\n\n"
-                    "How to get cookies:\n"
-                    "1. Install 'Get cookies.txt' browser extension\n"
-                    "2. Visit Instagram and login\n"
-                    "3. Export cookies as cookies.txt\n"
-                    "4. Send the file here"
-                )
-            else:
-                await status_msg.edit_text(f"❌ Failed: {error_msg}")
-                
-    except Exception as e:
-        await status_msg.edit_text(f"⚠️ Error: {str(e)}")
-
-async def upload_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle cookie file upload."""
-    await update.message.reply_text(
-        "📤 Please send your Instagram cookies.txt file.\n\n"
-        "⚠️ Keep your cookies private and secure!"
+    # Submit to Queue
+    job = await download_queue.submit(
+        user_id=user_id,
+        url=url,
+        platform=platform,
+        upload_func=upload_func
     )
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle document (cookie file) upload."""
-    document: Document = update.message.document
-    user_id = str(update.effective_user.id)
-    
-    if not document.file_name.endswith('.txt'):
-        await update.message.reply_text("❌ Please send a .txt file")
-        return
-    
-    # Download file
-    file = await document.get_file()
-    temp_path = f"/tmp/cookies_{user_id}.txt"
-    await file.download_to_drive(temp_path)
-    
-    # Save cookie file
-    cookie_manager = CookieManager()
-    result = cookie_manager.save_cookie_file(user_id, "instagram", temp_path)
-    
-    if result['success']:
-        await update.message.reply_text(
-            "✅ Cookies saved successfully!\n\n"
-            "You can now download private Instagram content."
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ Failed to save cookies: {result.get('error')}"
-        )
-    
-    # Clean up temp file
-    os.remove(temp_path)
-
-def main_telegram():
-    """Run Telegram bot."""
-    load_dotenv()
-    
-    # Create application
-    app = Application.builder().token(os.getenv('TELEGRAM_BOT_TOKEN')).build()
-    
-    # Add handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("upload_cookies", upload_cookies))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    
-    # Run bot
-    print("🤖 StoryFlow Telegram Bot started!")
-    app.run_polling()
-
-if __name__ == "__main__":
-    # Choose mode
-    mode = os.getenv('MODE', 'cli')
-    
-    if mode == 'telegram':
-        main_telegram()
-    else:
-        main_cli()
 ```
 
 ---

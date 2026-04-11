@@ -2,59 +2,52 @@
 
 ## Telegram Bot
 
-Once the bot is running, interact with it on Telegram.
+StoryFlow is a high-reliability bot designed for seamless media retrieval.
 
 ### Basic Commands
 
 | Command | Description |
 |:---|:---|
-| `/start` | Shows the main menu with interactive buttons. |
-| `/help` | Displays the help message and usage instructions. |
-| `/upload_cookies` | Upload a `cookies.txt` file for authentication. |
-| `/my_cookies` | List currently active cookies. |
-| `/delete_cookies` | Select cookies to delete. |
+| `/start` | Opens the main interactive dashboard. |
+| `/help` | Detailed usage instructions and platform tips. |
+| `/my_cookies` | Dashboard for managing Instagram/Facebook session files. |
+| `/stats` | (Admin) View system health and storage metrics. |
 
 ### Downloading Media
 
-Simply **send a link** to the bot. It supports:
+Simply **send any supported link** to the bot. StoryFlow uses a specialized **Job Queue** to ensure every request is handled reliably, even during high-traffic periods.
 
-- **Instagram**: Reels, Stories, Posts.
-  - *Note: Stories usually require cookies.*
+**Supported Platforms:**
+- **Instagram**: Reels, Stories, Posts (including private content with cookies).
 - **Snapchat**: Public Stories.
-- **TikTok**: Videos (Watermark-free).
-- **Facebook**: Public Reels/Videos.
-- **Twitter/X**: Videos/GIFs.
+- **TikTok**: High-quality watermark-free videos.
+- **Facebook**: Reels and public videos.
+- **Twitter/X**: Media attachments and GIFs.
 
-The bot will:
-1.  Analyze the link.
-2.  Download the content.
-3.  Upload it back to you.
-4.  Delete the temporary file from the server.
+### The Download Process
 
-### Authentication (Cookies)
+1.  **Submission**: Your link is added to the queue instantly.
+2.  **Isolation**: The bot creates a unique, private directory just for your job to ensure privacy.
+3.  **Download**: The system uses a multi-stage approach (gallery-dl -> fallback to yt-dlp) to ensure retrieval success.
+4.  **Delivery**: Media is sent back to you (MTProto is used for files >50MB to support up to 2GB delivery).
+5.  **Nuclear Cleanup**: The temporary files and private directory are deleted *immediately* after delivery.
 
-Some content (especially Instagram Stories or age-gated videos) requires login.
+### Admin Features
 
-1.  **Export Cookies**: Use a browser extension like "Get cookies.txt LOCALLY" (Chrome/Firefox) to export cookies from Instagram or Facebook while logged in.
-2.  **Upload to Bot**:
-    - Send `/upload_cookies`.
-    - Select the platform button (Instagram or Facebook).
-    - Send the `.txt` file when prompted.
-3.  **Automatic Usage**: The bot will automatically use these cookies for future requests.
+Admins can monitor the bot's health using the `/stats` command, which includes:
+- **Queue Status**: Active and pending jobs.
+- **Storage Metrics**: Visual progress bar showing disk usage.
+- **User Management**: Authorize new users with `/adduser`.
 
-### Large Files
-
-- **Standard**: Files up to 50MB are sent normally.
-- **Large**: Files > 50MB (up to 2GB) are sent via MTProto.
-  - You will see a "📤 Uploading: XX%" progress log in the bot console (and a "Sending..." status in Telegram).
+---
 
 ## CLI Mode
 
-You can also run StoryFlow as a command-line tool for testing.
+StoryFlow can also be used as a CLI tool for local testing or batch processing.
 
 ```bash
 # Set MODE=cli in .env
 python storyflow.py
 ```
 
-It will prompt for a URL and try to download it to the `./downloads` folder.
+The CLI now uses the same underlying **Async Job Engine** as the bot, ensuring consistent performance across both interfaces.

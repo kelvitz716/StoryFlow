@@ -99,7 +99,7 @@ def format_result(result: dict) -> None:
             print("   file in the ./cookies directory as 'instagram.txt'")
 
 
-def main_cli():
+async def main_cli():
     """Main CLI execution loop."""
     # Load environment variables
     load_dotenv()
@@ -157,11 +157,11 @@ def main_cli():
                     continue
                 
                 print(f"\n🔄 Fetching stories for @{username}...")
-                result = snapchat.download_stories(username)
+                result = await snapchat.download(url, user_id="cli", job_id="cli_session")
                 
             elif platform in ["Instagram", "TikTok", "Twitter", "Facebook"]:
                 print(f"\n🔄 Downloading {platform} content...")
-                result = gallery_dl.download(url, platform)
+                result = await gallery_dl.download(url, platform, user_id="cli", job_id="cli_session")
                 
             elif platform == "Unknown":
                 print("\n🚫 Unsupported platform.")
@@ -222,7 +222,8 @@ def main():
     if mode == 'telegram':
         main_telegram()
     else:
-        main_cli()
+        import asyncio
+        asyncio.run(main_cli())
 
 
 if __name__ == "__main__":

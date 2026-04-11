@@ -26,7 +26,7 @@ class GalleryDLDownloader:
         os.makedirs(output_path, exist_ok=True)
         os.makedirs(cookie_path, exist_ok=True)
     
-    async def download(self, url: str, platform: str, user_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
+    async def download(self, url: str, platform: str, user_id: Optional[str] = None, job_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Download media using gallery-dl with optional cookie support (Async).
         
@@ -34,15 +34,20 @@ class GalleryDLDownloader:
             url: Media URL
             platform: Platform name (Instagram, TikTok, etc.)
             user_id: User ID for cookie lookup (optional)
+            job_id: Unique job identifier for directory isolation (optional)
             
         Returns:
             Dict containing status and download information
         """
         try:
-            # Get list of files before download
-            files_before = self._get_download_files()
+            # Determine job-specific output path
+            job_output_path = os.path.join(self.output_path, job_id) if job_id else self.output_path
+            os.makedirs(job_output_path, exist_ok=True)
+
+            # Get list of files before download (only in this job's folder)
+            files_before = self._get_download_files(job_output_path)
             
-            command = self._build_command(url, platform, user_id)
+            command = self._build_command(url, platform, user_id, job_output_path)
             
             logging.info(f"📥 Downloading {platform} content via gallery-dl...")
             logging.debug(f"Command: {' '.join(command)}")
@@ -51,7 +56,7 @@ class GalleryDLDownloader:
             result = await self._execute_with_retry(command, progress_callback=progress_callback)
             
             # Find new files after gallery-dl attempt
-            files_after = self._get_download_files()
+            files_after = self._get_download_files(job_output_path)
             new_files = [f for f in files_after if f not in files_before]
             
             if result['success']:
@@ -61,14 +66,13 @@ class GalleryDLDownloader:
                     return result
                 
                 # Check for cached files (if any were already in the folder)
-                # Defensive: Only return files that likely belong to this URL to prevent leakage
-                match_files = self._filter_files_by_url(url, files_after)
-                if match_files:
-                    logging.info(f"📂 Found {len(match_files)} potentially cached files for this ID")
-                    result['files'] = match_files
+                # Since we use a unique folder, any file here belongs to this job.
+                if files_after:
+                    logging.info(f"📂 Found {len(files_after)} files in the job directory")
+                    result['files'] = list(files_after)
                     return result
                 
-                logging.warning(f"⚠️ No new or cached files found after gallery-dl success.")
+                logging.warning(f"⚠️ No files found after gallery-dl success in folder: {job_output_path}")
             
             # Check for partial success (files downloaded despite error)
             if new_files:
@@ -83,7 +87,7 @@ class GalleryDLDownloader:
             fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram"]
             if platform in fallback_platforms:
                 logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                fallback_result = await self._download_with_ytdlp(url, platform, user_id, files_before, files_after)
+                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback)
                 if fallback_result and fallback_result['success']:
                     return fallback_result
                 elif fallback_result:
@@ -104,16 +108,17 @@ class GalleryDLDownloader:
                 'platform': platform
             }
     
-    def _get_download_files(self) -> set:
-        """Get set of all files currently in download directory."""
+    def _get_download_files(self, path: Optional[str] = None) -> set:
+        """Get set of all files currently in specified directory."""
+        target_path = path or self.output_path
         files = set()
-        for root, dirs, filenames in os.walk(self.output_path):
+        for root, dirs, filenames in os.walk(target_path):
             for filename in filenames:
                 if not filename.startswith('.'):  # Skip hidden files
                     files.add(os.path.join(root, filename))
         return files
     
-    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], files_before: set, files_mid: Optional[set] = None, progress_callback: Optional[Callable] = None) -> Dict:
+    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).
         
@@ -121,15 +126,16 @@ class GalleryDLDownloader:
             url: Media URL
             platform: Platform name
             user_id: User ID for cookie lookup
+            output_path: Isolated output directory
             files_before: Set of files before request started
-            files_mid: Set of files after gallery-dl attempt (Optimization)
             
         Returns:
             Dict with download result
         """
         try:
             # Build yt-dlp command
-            output_template = os.path.join(self.output_path, f'{platform.lower()}', '%(id)s.%(ext)s')
+            # Use specific directory based on platform or direct output_path
+            output_template = os.path.join(output_path, '%(id)s.%(ext)s')
             command = [
                 'yt-dlp',
                 '-o', output_template,
@@ -154,7 +160,7 @@ class GalleryDLDownloader:
             
             if result['success']:
                 # Find new files
-                files_after = self._get_download_files()
+                files_after = self._get_download_files(output_path)
                 
                 # Use files_before as baseline to capture all files new since request start, 
                 # regardless of which downloader produced them.
@@ -203,11 +209,11 @@ class GalleryDLDownloader:
                 'platform': platform
             }
     
-    def _build_command(self, url: str, platform: str, user_id: Optional[str]) -> list:
+    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str) -> list:
         """Build gallery-dl command with appropriate options."""
         command = [
             'gallery-dl',
-            '-d', self.output_path,
+            '-d', output_path,
             '--no-mtime',  # Don't set file modification time
         ]
         
@@ -430,47 +436,3 @@ class GalleryDLDownloader:
         ]
         stderr_lower = stderr.lower()
         return any(keyword in stderr_lower for keyword in retryable_keywords)
-
-    def _filter_files_by_url(self, url: str, files: set) -> list:
-        """
-        Attempt to find files that belong to a specific URL/ID.
-        This is a best-effort defense against returning the wrong user's files.
-        """
-        # Try to find common ID patterns in URLs
-        # Instagram: /p/ABC123/ or /reel/ABC123/ or /stories/user/123/
-        # TikTok: /video/123
-        # Twitter: /status/123
-        # Snapchat: /add/user or /p/123
-        
-        # Extract potential IDs (alphanumeric, at least 5 chars)
-        potential_ids = re.findall(r'([a-zA-Z0-9_\-]{5,})', url.lower())
-        
-        # Filter out common structural tokens that would cause false positives
-        structural_tokens = {
-            'https', 'http', 'www', 'instagram', 'facebook', 'tiktok', 'twitter', 
-            'snapchat', 'reels', 'reel', 'status', 'stories', 'story', 'video', 
-            'videos', 'photo', 'photos', 'image', 'images', 'download', 'downloads',
-            'media', 'posts', 'post', 'added'
-        }
-        potential_ids = [pid for pid in potential_ids if pid not in structural_tokens]
-        
-        if not potential_ids:
-            return []
-            
-        matches = []
-        for filepath in files:
-            filename = os.path.basename(filepath).lower()
-            # Check if any ID from the URL is in the filename
-            if any(pid in filename for pid in potential_ids):
-                matches.append(filepath)
-        
-        # If no matches by ID, but they are all in a subfolder named after the user/ID
-        if not matches:
-             for filepath in files:
-                filepath_lower = filepath.lower()
-                for pid in potential_ids:
-                    if pid in filepath_lower:
-                        matches.append(filepath)
-                        break
-
-        return matches

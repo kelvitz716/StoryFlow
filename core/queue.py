@@ -34,6 +34,7 @@ class DownloadJob:
     error: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
+    job_dir: Optional[str] = None
     
     def to_dict(self) -> Dict:
         return {
@@ -92,6 +93,12 @@ class DownloadQueue:
         for i in range(self.max_concurrent):
             worker = asyncio.create_task(self._worker(i))
             self._workers.append(worker)
+            
+        # Start cleanup task
+        self._cleanup_task = asyncio.create_task(self._background_cleanup())
+        
+        # Perform initial startup sweep
+        self._startup_sweep()
     
     async def stop(self):
         """Stop all workers gracefully."""
@@ -103,6 +110,13 @@ class DownloadQueue:
         
         if self._workers:
             await asyncio.gather(*self._workers, return_exceptions=True)
+        
+        if hasattr(self, '_cleanup_task'):
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
         
         self._workers = []
         logging.info("🛑 Download queue stopped")
@@ -147,7 +161,8 @@ class DownloadQueue:
             user_id=user_id,
             url=url,
             platform=platform,
-            message="Waiting in queue..."
+            message="Waiting in queue...",
+            job_dir=os.path.join(self.download_path, job_id)
         )
         
         # Track job
@@ -216,8 +231,12 @@ class DownloadQueue:
                     job.message = "Downloading content..."
                     await self._notify_status(job)
                     
+                    # Ensure job directory exists
+                    if job.job_dir:
+                        os.makedirs(job.job_dir, exist_ok=True)
+
                     # Check storage before download
-                    is_critical, current_usage = is_storage_critical(self.download_path, threshold=99.0)
+                    is_critical, current_usage = is_storage_critical(job.job_dir or self.download_path, threshold=99.0)
                     
                     if is_critical:
                         logging.warning(f"🛑 Storage critical ({current_usage}%). Job {job.job_id} blocked.")
@@ -246,10 +265,10 @@ class DownloadQueue:
                     is_spotlight = "/spotlight/" in job.url
                     
                     if job.platform == "Snapchat" and self.snapchat and not is_spotlight:
-                         result = await self.snapchat.download(job.url, job.user_id)
+                         result = await self.snapchat.download(job.url, job.user_id, job.job_id)
                     elif self.gallery_dl:
                          result = await self.gallery_dl.download(
-                             job.url, job.platform, job.user_id, progress_callback=progress_callback
+                             job.url, job.platform, job.user_id, job.job_id, progress_callback=progress_callback
                          )
                     else:
                          result = {'success': False, 'error': 'Downloader not initialized'}
@@ -310,10 +329,12 @@ class DownloadQueue:
                 logging.error(f"Worker {worker_id} error: {e}")
     
     def _cleanup_job(self, job_id: str):
-        """Remove job from tracking dictionaries."""
+        """Remove job from tracking dictionaries and cleanup directory."""
         job = self._jobs.pop(job_id, None)
         if job:
             user_id = job.user_id
+            
+            # 1. Remove from user tracking
             if user_id in self._user_jobs:
                 try:
                     self._user_jobs[user_id].remove(job_id)
@@ -321,6 +342,15 @@ class DownloadQueue:
                         del self._user_jobs[user_id]
                 except ValueError:
                     pass
+            
+            # 2. Cleanup job directory
+            if job.job_dir and os.path.exists(job.job_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(job.job_dir)
+                    logging.info(f"🧹 Cleaned up directory for job {job_id}")
+                except Exception as e:
+                    logging.error(f"⚠️ Failed to cleanup directory {job.job_dir}: {e}")
     
     async def _notify_status(self, job: DownloadJob):
         """Call status callback if set."""
@@ -329,6 +359,68 @@ class DownloadQueue:
                 await self.status_callback(job)
             except Exception as e:
                 logging.error(f"Status callback error: {e}")
+
+    async def _background_cleanup(self):
+        """Periodically clean up orphan job directories."""
+        logging.info("🧹 Background cleanup task started")
+        while self._running:
+            try:
+                # Wait 1 hour between sweeps
+                await asyncio.sleep(3600)
+                
+                if not os.path.exists(self.download_path):
+                    continue
+                    
+                current_time = time.time()
+                # 2 hours age threshold for orphan folders
+                max_age = 7200 
+                
+                for entry in os.scandir(self.download_path):
+                    if entry.is_dir():
+                        # Skip if it's an active job dir
+                        is_active = any(job.job_dir == entry.path for job in self._jobs.values())
+                        if is_active:
+                            continue
+                            
+                        # Check age
+                        try:
+                            mtime = entry.stat().st_mtime
+                            if current_time - mtime > max_age:
+                                import shutil
+                                shutil.rmtree(entry.path)
+                                logging.info(f"🧹 Removed orphan directory: {entry.name}")
+                        except Exception as e:
+                            logging.warning(f"Failed to cleanup orphan {entry.name}: {e}")
+                            
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error(f"Background cleanup error: {e}")
+                await asyncio.sleep(60) # Prevent tight loop on persistent error
+
+    def _startup_sweep(self):
+        """Clean up all legacy debris in download directory on startup."""
+        if not os.path.exists(self.download_path):
+            return
+            
+        logging.info("🧹 Performing initial startup sweep...")
+        count = 0
+        try:
+            for entry in os.scandir(self.download_path):
+                if entry.is_dir():
+                    # On startup, we assume EVERYTHING is debris as no jobs are active yet
+                    import shutil
+                    try:
+                        shutil.rmtree(entry.path)
+                        count += 1
+                        logging.debug(f"🧹 Swept debris: {entry.name}")
+                    except Exception as e:
+                        logging.warning(f"Failed to sweep debris folder {entry.name}: {e}")
+            
+            if count > 0:
+                logging.info(f"✨ Startup sweep complete: Removed {count} orphan directories.")
+        except Exception as e:
+            logging.error(f"Startup sweep failed: {e}")
 
 
 # Global queue instance

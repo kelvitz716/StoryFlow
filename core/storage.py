@@ -61,9 +61,11 @@ def format_storage_report(path: str = ".") -> str:
     def to_gb(b):
         return b / (1024**3)
         
+    usage_bar = "▓" * (int(info['percent_used'] // 10)) + "░" * (10 - int(info['percent_used'] // 10))
+    
     return (
         f"📊 *Storage Report*\n"
         f"📍 Path: `{info['path']}`\n"
-        f"📈 Usage: {info['percent_used']}%\n"
-        f"🆓 Free: {to_gb(info['free']):.2f} GB / {to_gb(info['total']):.2f} GB"
+        f"📈 Progress: `[{usage_bar}]` {info['percent_used']}%\n"
+        f"🆓 Free: `{to_gb(info['free']):.2f} GB` / `{to_gb(info['total']):.2f} GB`"
     )
