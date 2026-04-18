@@ -15,6 +15,7 @@ graph TD
     
     Worker -->|Snapchat| SnapDL[Snapchat Downloader]
     Worker -->|Insta/TikTok/FB| GalleryDL[Gallery-DL Wrapper]
+    SnapDL & GalleryDL -->|Inherits| BaseDL[BaseDownloader]
     GalleryDL -->|Fallback| YTDLP[yt-dlp Wrapper]
     
     Worker -->|Success/Files| Uploader[bot/uploader.py]
@@ -34,13 +35,14 @@ Modularized for high-performance interaction and maintainability.
 
 ### 2. Core Logic (`core/`)
 - **Platform Identification**: Regex-based detection of social media URLs (`platform.py`).
-- **Queue System**: Async worker-based queue. Manages concurrency and prevents API rate limits (`queue.py`).
+- **Queue System**: Async worker-based queue. Manages concurrency and prevents API rate limits (`queue.py`). Now uses simplified dynamic state tracking.
 - **Storage Management**: Monitoring disk usage and performing "Safe Sweeps" on startup (`storage.py`, `queue.py`).
 
 ### 3. Downloaders (`downloaders/`)
+- **BaseDownloader**: Abstract class consolidating shared execution logic, directory preparation, and error tracking.
 - **Job Isolation**: Every download job creates a unique subdirectory `downloads/{job_id}/` to prevent media leakage.
-- **Snapchat**: Custom API client for fetching Snap stories (`snapchat.py`).
-- **Gallery-DL**: Wrapper around the `gallery-dl` CLI tool (`gallery_dl.py`).
+- **Snapchat**: API client for fetching Snap stories (`snapchat.py`). Inherits from `BaseDownloader`.
+- **Gallery-DL**: Wrapper around the `gallery-dl` CLI tool (`gallery_dl.py`). Inherits from `BaseDownloader`.
   - Implements `yt-dlp` fallback for high-reliability fetching.
 
 ### 4. Authentication (`auth/`)

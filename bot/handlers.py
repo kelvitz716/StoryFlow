@@ -11,7 +11,7 @@ from auth.access import AccessManager
 from auth.cookies import CookieManager  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES, resolve_shortlink
 import asyncio
 import time
 
@@ -26,6 +26,8 @@ PROCESSING_MSGS = [
 AUTH_PENDING = None
 AUTH_TYPE = None
 AUTH_ADMIN_ID = None
+
+
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                      access_manager: AccessManager, download_queue,
@@ -92,6 +94,9 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             context.user_data.pop('awaiting_action', None)
             await send_admin_menu(update.effective_message, user_id, access_manager)
             return
+
+    # Resolve any shortlinks first
+    url = await resolve_shortlink(url)
 
     # Identify platform
     platform = identify_platform(url)

@@ -107,6 +107,32 @@ def identify_platform(url: str) -> str:
         return "Error"
 ```
 
+### 3.2 Multi-Platform Downloader Base
+
+**Class:** `BaseDownloader`
+
+All platform-specific downloaders inherit from this base class to ensure consistent directory isolation, safe subprocess execution, and unified error handling.
+
+```python
+class BaseDownloader:
+    """Consolidated base for all media downloaders."""
+    
+    def __init__(self, output_path: str):
+        self.output_path = output_path
+        os.makedirs(output_path, exist_ok=True)
+
+    def _prepare_job_directory(self, job_id: str) -> str:
+        """Isolated sandbox for every download task."""
+        job_dir = os.path.join(self.output_path, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        return job_dir
+
+    async def _execute_with_retry(self, command: list, process_name: str, max_attempts: int = 3) -> Dict:
+        """Unified async execution with timeout and retry logic."""
+        # Uses asyncio.create_subprocess_exec with 5-minute timeouts
+        # Implements exponential backoff and platform-agnostic failure detection
+```
+
 ---
 
 ## 4. Rate Limiting & Retry Strategy
@@ -193,61 +219,24 @@ import os
 import logging
 from typing import Optional, Dict
 
-class SnapchatDownloader:
+class SnapchatDownloader(BaseDownloader):
     """Handler for Snapchat downloads using SnapStory DL API."""
     
-    def __init__(self, api_base_url: str, api_key: Optional[str] = None):
+    def __init__(self, api_base_url: str, output_path: str = './downloads'):
+        super().__init__(output_path)
         self.api_base_url = api_base_url.rstrip('/')
-        self.api_key = api_key
-        self.rate_limiter = RateLimiter(
-            max_requests=int(os.getenv('MAX_REQUESTS_PER_MINUTE', 30))
-        )
+        self.rate_limiter = RateLimiter(max_requests=30)
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'StoryFlow/1.0',
-            'Accept': 'application/json'
-        })
     
-    @create_retry_decorator()
-    async def download(self, url: str, user_id: Optional[str] = None, job_id: Optional[str] = None) -> Dict:
+    async def download(self, url: str, job_id: str) -> Dict:
         """
-        Download Snapchat story using SnapStory DL API (Async).
-        
-        Args:
-            url: Snapchat story URL
-            user_id: Telegram user ID
-            job_id: Unique job identifier for directory isolation
-            
-        Returns:
-            Dict containing status and media information
+        Unified download entry point (Async).
+        Wraps the synchronous API requests in a thread executor.
         """
-        self.rate_limiter.wait_if_needed()
-        
-        try:
-            # Construct API request
-            api_endpoint = f"{self.api_base_url}/download"
-            params = {'url': url}
-            
-            if self.api_key:
-                params['api_key'] = self.api_key
-            
-            logging.info(f"📡 Requesting Snapchat story from API...")
-            
-            # Make API request with timeout
-            response = self.session.get(
-                api_endpoint,
-                params=params,
-                timeout=30
-            )
-            
-            # Check HTTP status
-            response.raise_for_status()
-            
-            # Parse response
-            data = response.json()
-            
-            if data.get('success') or data.get('status') == 'success':
-                media_url = data.get('media_url') or data.get('download_url')
+        username = extract_username(url)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.download_stories, username, job_id)
+```
                 
                 if media_url:
                     # Download actual media file
@@ -323,147 +312,26 @@ import os
 import logging
 from typing import Optional, Dict
 
-class GalleryDLDownloader:
+class GalleryDLDownloader(BaseDownloader):
     """Handler for general media downloads using gallery-dl."""
     
     def __init__(self, output_path: str = './downloads', cookie_path: str = './cookies'):
-        self.output_path = output_path
+        super().__init__(output_path)
         self.cookie_path = cookie_path
-        os.makedirs(output_path, exist_ok=True)
-        os.makedirs(cookie_path, exist_ok=True)
     
-    async def download(self, url: str, platform: str, user_id: Optional[str] = None, job_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
+    async def download(self, url: str, platform: str, user_id: str, job_id: str) -> Dict:
         """
-        Download media using gallery-dl with job isolation (Async).
-        
-        Args:
-            url: Media URL
-            platform: Platform name (Instagram, TikTok, etc.)
-            user_id: User ID for cookie lookup
-            job_id: Unique job identifier
-            progress_callback: Optional callback for status updates
-            
-        Returns:
-            Dict containing status and download information
+        Modernized async downloader with automatic directory sandboxing.
         """
-        # Determine job-specific output path
-        job_output_path = os.path.join(self.output_path, job_id) if job_id else self.output_path
-        os.makedirs(job_output_path, exist_ok=True)
-        try:
-            command = self._build_command(url, platform, user_id)
-            
-            logging.info(f"📥 Downloading {platform} content via gallery-dl...")
-            logging.debug(f"Command: {' '.join(command)}")
-            
-            # Execute gallery-dl with retry logic
-            result = self._execute_with_retry(command)
-            
-            if result['success']:
-                logging.info(f"✅ {platform} content downloaded successfully!")
-                return result
-            else:
-                logging.error(f"❌ Download failed: {result.get('error')}")
-                return result
-                
-        except Exception as e:
-            logging.error(f"❌ Unexpected error: {e}")
-            return {
-                'success': False,
-                'error': 'Unexpected error',
-                'details': str(e)
-            }
-    
-    def _build_command(self, url: str, platform: str, user_id: Optional[str]) -> list:
-        """Build gallery-dl command with appropriate options."""
-        command = [
-            'gallery-dl',
-            '-d', self.output_path,
-            '--no-mtime',  # Don't set file modification time
-        ]
+        job_dir = self._prepare_job_directory(job_id)
+        files_before = self._get_download_files(job_dir)
         
-        # Add cookie support for Instagram
-        if platform == "Instagram" and user_id:
-            cookie_file = os.path.join(self.cookie_path, f"instagram_{user_id}.txt")
-            if os.path.exists(cookie_file):
-                logging.info(f"🍪 Using cookies for authentication: {cookie_file}")
-                command.extend(['--cookies', cookie_file])
-            else:
-                logging.warning(f"⚠️ No cookie file found for user {user_id}")
+        command = self._build_command(url, platform, user_id, job_dir)
+        result = await self._execute_with_retry(command, process_name="gallery-dl")
         
-        # Add URL as final argument
-        command.append(url)
-        
-        return command
-    
-    def _execute_with_retry(self, command: list, max_attempts: int = 3) -> Dict:
-        """Execute command with retry logic."""
-        for attempt in range(1, max_attempts + 1):
-            try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=300  # 5 minutes timeout
-                )
-                
-                return {
-                    'success': True,
-                    'stdout': result.stdout,
-                    'stderr': result.stderr
-                }
-                
-            except subprocess.CalledProcessError as e:
-                logging.warning(f"⚠️ Attempt {attempt}/{max_attempts} failed")
-                logging.debug(f"Exit code: {e.returncode}")
-                logging.debug(f"STDERR: {e.stderr}")
-                
-                # Check if it's an authentication error
-                if 'login' in e.stderr.lower() or 'authentication' in e.stderr.lower():
-                    return {
-                        'success': False,
-                        'error': 'Authentication required',
-                        'details': 'Please upload cookies.txt file',
-                        'stderr': e.stderr
-                    }
-                
-                # Retry on network errors
-                if attempt < max_attempts and self._is_retryable_error(e.stderr):
-                    wait_time = 2 ** attempt  # Exponential backoff
-                    logging.info(f"⏳ Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                
-                return {
-                    'success': False,
-                    'error': f'gallery-dl failed (exit code {e.returncode})',
-                    'stderr': e.stderr
-                }
-                
-            except subprocess.TimeoutExpired:
-                logging.error(f"❌ Timeout after 5 minutes")
-                return {
-                    'success': False,
-                    'error': 'Download timeout',
-                    'details': 'Process exceeded 5 minute limit'
-                }
-        
-        return {
-            'success': False,
-            'error': 'Max retry attempts reached'
-        }
-    
-    def _is_retryable_error(self, stderr: str) -> bool:
-        """Check if error is retryable."""
-        retryable_keywords = [
-            'timeout',
-            'connection',
-            'network',
-            'temporary',
-            'rate limit'
-        ]
-        stderr_lower = stderr.lower()
-        return any(keyword in stderr_lower for keyword in retryable_keywords)
+        # Post-download: Diff directory to identify new files
+        # Includes automatic yt-dlp fallback logic...
+```
 ```
 
 ---

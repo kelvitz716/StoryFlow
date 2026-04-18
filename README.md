@@ -49,6 +49,7 @@ python storyflow.py
 |---------|-------------|
 | `/start` | Welcome message with buttons |
 | `/help` | Usage guide |
+| `/queue` | View active and pending jobs (Admin) |
 | `/upload_cookies` | Upload Instagram cookies |
 | `/my_cookies` | View saved cookies |
 | `/delete_cookies` | Remove cookies |

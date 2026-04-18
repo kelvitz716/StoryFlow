@@ -6,6 +6,21 @@ from typing import Optional, Dict
 # Global registry for job status messages (shared between handlers and bot entry point)
 JOB_MESSAGES: Dict[str, any] = {}
 
+import asyncio
+import requests
+
+async def resolve_shortlink(url: str) -> str:
+    """Resolve known URL shorteners using requests asynchronously."""
+    shortener_domains = ['ift.tt', 'bit.ly', 't.co', 'tinyurl.com', 'dl.snapchat.com']
+    if any(domain in url.lower() for domain in shortener_domains):
+        try:
+            # Run the synchronous requests call in a separate thread to avoid blocking the event loop
+            response = await asyncio.to_thread(requests.head, url, allow_redirects=True, timeout=10)
+            return str(response.url)
+        except Exception as e:
+            logging.error(f"Failed to resolve shortlink {url}: {e}")
+    return url
+
 def escape_markdown(text: str, version: int = 2) -> str:
     """
     Escape special characters for Telegram Markdown.
