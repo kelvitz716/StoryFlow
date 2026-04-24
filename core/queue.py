@@ -112,7 +112,7 @@ class DownloadQueue:
         try:
             orphaned = []
             with db.get_conn() as conn:
-                cur = conn.execute("SELECT job_id, chat_id FROM jobs WHERE status IN ('queued', 'downloading', 'uploading')")
+                cur = conn.execute("SELECT job_id, chat_id, message_id FROM jobs WHERE status IN ('queued', 'downloading', 'uploading')")
                 orphaned = cur.fetchall()
                 if not orphaned:
                     return
@@ -122,10 +122,12 @@ class DownloadQueue:
             logging.info(f"🔄 Recovered {len(orphaned)} orphaned jobs from previous crash.")
             for orphan in orphaned:
                 chat_id = orphan['chat_id']
+                message_id = orphan['message_id']
                 if chat_id and telegram_bot:
                     try:
                         await telegram_bot.send_message(
                             chat_id=chat_id,
+                            reply_to_message_id=message_id,
                             text="⚠️ *Server Restarted*\n\nSorry! The server had to restart while processing your link. Please try sending it again.",
                             parse_mode='Markdown'
                         )
