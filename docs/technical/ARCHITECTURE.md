@@ -35,7 +35,8 @@ Modularized for high-performance interaction and maintainability.
 
 ### 2. Core Logic (`core/`)
 - **Platform Identification**: Regex-based detection of social media URLs (`platform.py`).
-- **Queue System**: Async worker-based queue. Manages concurrency and prevents API rate limits (`queue.py`). Now uses simplified dynamic state tracking.
+- **Database Architecture**: Centralized, WAL-enabled SQLite database (`database.db`) enforcing ACID guarantees over user authorization lists, global user statistics, and persistent job states (`database.py`, `stats.py`).
+- **Queue System**: Async worker-based queue. Manages concurrency natively up to `10` simultaneous streams. Persists all actions to SQLite jobs table allowing orphaned jobs to auto-recover via Telegram DMs on server restart (`queue.py`).
 - **Storage Management**: Monitoring disk usage and performing "Safe Sweeps" on startup (`storage.py`, `queue.py`).
 
 ### 3. Downloaders (`downloaders/`)
@@ -52,9 +53,10 @@ Modularized for high-performance interaction and maintainability.
 ## Data Flow
 
 1.  **Input**: User sends a URL.
-2.  **Detection & Queue**: Platform is identified, and a job is submitted to the `DownloadQueue`.
+2.  **Detection & Queue**: Platform is identified, and a job is submitted to the `DownloadQueue`. Job state is atomically injected into the SQLite `.db`.
 3.  **Isolation**: The worker creates a unique `downloads/{job_id}` folder.
 4.  **Execution**: Appropriate wrapper downloads media into the isolated folder.
 5.  **Multi-Stage Retrieval**: If `gallery-dl` fails, the system automatically falls back to `yt-dlp`.
-6.  **Upload**: `uploader.py` batches files into media groups for delivery.
-7.  **Nuclear Cleanup**: The job directory is deleted *immediately* after delivery or failure.
+6.  **Server Recovery System**: If the core dies mid-download, the next initialization boot fetches hanging jobs from SQLite and delivers error messages directly into user chats.
+7.  **Upload**: `uploader.py` batches files into media groups for delivery.
+8.  **Nuclear Cleanup**: The job directory is deleted *immediately* after delivery or failure.

@@ -8,11 +8,9 @@ StoryFlow is a high-reliability bot designed for seamless media retrieval.
 
 | Command | Description |
 |:---|:---|
-| `/start` | Opens the main interactive dashboard. |
+| `/start` | Opens the main interactive dashboard. (Access Stats, Cookies, Admin Tools here). |
 | `/help` | Detailed usage instructions and platform tips. |
-| `/my_cookies` | Dashboard for managing Instagram/Facebook session files. |
-| `/queue` | (Admin) View live worker status and queued tasks dashboard. |
-| `/stats` | (Admin) View system health and storage metrics. |
+| `/queue` | View your current active downloads and queue position. |
 
 ### Downloading Media
 
@@ -35,10 +33,10 @@ Simply **send any supported link** to the bot. StoryFlow uses a specialized **Jo
 
 ### Admin Features
 
-Admins can monitor the bot's health using the `/stats` command, which includes:
-- **Queue Status**: Active and pending jobs.
-- **Storage Metrics**: Visual progress bar showing disk usage.
-- **User Management**: Authorize new users with `/adduser`.
+Admins can manage the bot via the **Admin Tools** button inside the `/start` menu:
+- **Queue Status**: Active and pending jobs visible in server UI.
+- **System Purge**: One-click purge of all temporary media debris.
+- **User Management**: Authorize new users interactively via the bot UI.
 
 ---
 
