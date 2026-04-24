@@ -68,3 +68,6 @@ data/allowed_users.json
 data/stats.json
 data/stats.json
 data/stats.json
+data/allowed_users.json.bak
+data/database.db
+data/stats.json.bak
