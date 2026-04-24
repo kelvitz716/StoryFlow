@@ -72,7 +72,7 @@ async def update_job_status(application: Application, job: DownloadJob):
             
         elif job.status == JobStatus.DOWNLOADING:
             # Escape the message for safe Markdown rendering
-            msg = escape_markdown(job.message)
+            msg = escape_markdown(job.message, version=1)
             await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} {msg}", parse_mode='Markdown')
             
         elif job.status == JobStatus.UPLOADING:
