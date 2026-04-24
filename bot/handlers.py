@@ -63,7 +63,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if not access_manager.is_admin(user_id):
             await msg.reply_text(
                 f"⛔ Not authorized.\n"
-                f"Ask the admin to run: `/adduser {user_id}`",
+                f"Ask the admin to authorize your ID: `{user_id}`",
                 parse_mode='Markdown'
             )
             return

@@ -25,7 +25,7 @@ async def send_main_menu(target, user_id: str, access_manager: Optional[AccessMa
     """Send or edit the main menu."""
     text = (
         "🎬 *StoryFlow Downloader*\n\n"
-        "I can download stories, reels, and videos from:\n"
+        "I securely download stories, reels, and videos from:\n"
         "👻 Snapchat • 📸 Instagram • 🎵 TikTok\n"
         "🐦 Twitter/X • 📘 Facebook\n\n"
         "👇 *Tap a button to get started!*"
@@ -45,11 +45,10 @@ async def send_help_menu(target, is_new_message: bool = True):
         "2️⃣ Paste it here\n"
         "3️⃣ I'll download and send it back!\n\n"
         "*Available Commands:*\n"
-        "• /start - Main menu\n"
+        "• /start - Main menu panel\n"
         "• /help - Usage guide\n"
-        "• /my\\_cookies - Manage login cookies\n"
-        "• /purge - ⚠️ Delete all downloaded files (Maintenance)\n\n"
-        "_Tap a platform for specific tips:_"
+        "• /queue - View your current active downloads\n\n"
+        "_Tap a platform below for specific tips:_"
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("👻 Snapchat", callback_data="help_snapchat"),
