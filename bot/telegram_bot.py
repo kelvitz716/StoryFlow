@@ -50,9 +50,6 @@ mtproto_client: Optional[any] = None
 download_queue: Optional[DownloadQueue] = None
 
 # MTProto Auth State (Shared with handlers)
-AUTH_PENDING = None
-AUTH_TYPE = None
-AUTH_ADMIN_ID = None
 
 # ============= UI UPDATES & CALLBACKS =============
 
@@ -103,6 +100,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # Navigation
     if data == "menu_main":
+        # Clear any pending admin actions when returning to main menu
+        context.user_data.pop('awaiting_action', None)
         await send_main_menu(query, user_id, access_manager, is_new_message=False)
     elif data == "menu_help":
         await send_help_menu(query, is_new_message=False)
@@ -116,34 +115,114 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         text = f"📊 *Your Statistics*\n\n📥 *Total Downloads:* {total}\n\n*Platform Breakdown:*\n{breakdown}"
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=get_back_button())
     
-    # Admin
+    # Admin — all branches below require admin access
     elif data == "menu_admin":
+        # Clear any dangling awaiting_action when re-entering admin menu
+        context.user_data.pop('awaiting_action', None)
         await send_admin_menu(query, user_id, access_manager, is_new_message=False)
     elif data == "admin_list":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
         users = access_manager.get_allowed_users()
-        user_list = "\n".join([f"• `{u}`" for u in users]) if users else "_No users allowed (only Admins)_"
+        user_list = "\n".join([f"• `{u}`" for u in users]) if users else "_No users allowed (only Admin)_"
         await query.edit_message_text(f"📋 *Allowed Users:*\n\n{user_list}", parse_mode='Markdown', reply_markup=get_back_button("menu_admin"))
     elif data == "admin_add":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
         context.user_data['awaiting_action'] = 'add_user'
-        await query.edit_message_text("➕ *Add User*\n\nSend the Telegram ID to authorize.", parse_mode='Markdown', reply_markup=get_back_button("menu_admin"))
+        await query.edit_message_text(
+            "➕ *Add User / Channel*\n\nReply with the Telegram ID to authorize.\n"
+            "_Tip: IDs can be negative (e.g. `-1001234567890` for a channel)._",
+            parse_mode='Markdown',
+            reply_markup=get_back_button("menu_admin")
+        )
     elif data == "admin_remove":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
         context.user_data['awaiting_action'] = 'remove_user'
-        await query.edit_message_text("➖ *Remove User*\n\nSend the Telegram ID to remove.", parse_mode='Markdown', reply_markup=get_back_button("menu_admin"))
-    
+        await query.edit_message_text(
+            "➖ *Remove User / Channel*\n\nReply with the Telegram ID to remove.",
+            parse_mode='Markdown',
+            reply_markup=get_back_button("menu_admin")
+        )
+
+    # Purge flow — admin only, requires confirmation
+    elif data == "menu_purge_confirm":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔥 Yes, purge everything", callback_data="purge_confirm")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")],
+        ])
+        await query.edit_message_text(
+            "⚠️ *System Purge*\n\n"
+            "This will delete *all* files in the downloads directory.\n"
+            "Active downloads will not be interrupted, but their output may be lost.\n\n"
+            "Are you sure?",
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+    elif data == "purge_confirm":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
+        download_path = None
+        if download_queue:
+            # Grab path from queue's downloader config
+            try:
+                download_path = download_queue.snapchat.output_path
+            except AttributeError:
+                pass
+        if not download_path:
+            import os
+            download_path = os.getenv('DOWNLOAD_PATH', '/app/downloads')
+        try:
+            import shutil, os
+            removed = 0
+            if os.path.isdir(download_path):
+                for entry in os.scandir(download_path):
+                    if entry.is_dir():
+                        shutil.rmtree(entry.path, ignore_errors=True)
+                        removed += 1
+                    else:
+                        os.remove(entry.path)
+                        removed += 1
+            logging.info(f"🔥 Admin purge: removed {removed} items from {download_path}")
+            await query.edit_message_text(
+                f"✅ *Purge Complete*\n\nRemoved `{removed}` items from the downloads directory.",
+                parse_mode='Markdown',
+                reply_markup=get_back_button("menu_admin")
+            )
+        except Exception as e:
+            logging.error(f"Purge failed: {e}")
+            await query.edit_message_text(
+                f"❌ Purge failed: `{e}`",
+                parse_mode='Markdown',
+                reply_markup=get_back_button("menu_admin")
+            )
+
     # Cookie Management
     elif data == "menu_delete_cookies":
         await send_delete_cookies_menu(query, is_new_message=False)
     elif data.startswith("delete_"):
         platform = data.replace("delete_", "")
         if platform == "all":
-            cookie_manager.delete_cookie_file(user_id, "instagram")
-            cookie_manager.delete_cookie_file(user_id, "facebook")
-            cookie_manager.delete_cookie_file(user_id, "tiktok")
-            text = "✅ All cookies deleted!"
+            deleted = sum([
+                cookie_manager.delete_cookie_file(user_id, "instagram"),
+                cookie_manager.delete_cookie_file(user_id, "facebook"),
+                cookie_manager.delete_cookie_file(user_id, "tiktok"),
+            ])
+            notice = f"✅ Deleted {deleted} cookie file(s)." if deleted else "ℹ️ No cookies were saved."
         else:
-            cookie_manager.delete_cookie_file(user_id, platform)
-            text = f"✅ {platform.title()} cookies deleted!"
-        await query.edit_message_text(text, reply_markup=get_back_button("menu_cookies"))
+            was_deleted = cookie_manager.delete_cookie_file(user_id, platform)
+            notice = f"✅ {platform.title()} cookies deleted." if was_deleted else f"ℹ️ No {platform.title()} cookies were saved."
+        # Edit to show result briefly, then re-render the full cookies menu
+        await query.edit_message_text(notice)
+        await send_cookies_menu(query, user_id, cookie_manager, is_new_message=False)
     
     elif data.startswith("cookies_"):
         platform = data.replace("cookies_", "")
@@ -164,16 +243,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(tips.get(platform, "No tips available."), parse_mode='Markdown', reply_markup=get_back_button("menu_help"))
 
 # ============= INFRASTRUCTURE & BOOTSTRAP =============
-
-async def cleanup_job_task(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Resilient cleanup task for old media folders."""
-    download_path = context.bot_data.get('download_path')
-    if not download_path: return
-    
-    logging.info("🧹 Starting background storage cleanup...")
-    # This logic is now mostly handled by job-specific cleanup in queue.py,
-    # but we can keep a general sweep for safety.
-    pass
 
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_url: str) -> None:
     """Initialize and run the StoryFlow Telegram bot."""
@@ -222,7 +291,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     app.bot_data['download_path'] = download_path
     
     # Handlers
-    from bot.handlers import queue_command
+    from bot.handlers import queue_command, handle_admin_input
     app.add_handler(CommandHandler("start", lambda u, c: start(u, c, access_manager)))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("queue", lambda u, c: queue_command(u, c, access_manager, download_queue)))
@@ -230,21 +299,24 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
     # Callback Query
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # MTProto Auth Interceptor
+    # MTProto Auth Interceptor (highest priority, group -1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_auth_input), group=-1)
+
+    # Admin text input handler: catches any plain text when admin has a pending action.
+    # Runs in group 0 before the URL handler so bare IDs/numbers are handled correctly.
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        lambda u, c: handle_admin_input(u, c, access_manager)
+    ), group=0)
 
     # Document handler for cookie uploads
     app.add_handler(MessageHandler(filters.Document.ALL, lambda u, c: handle_document(u, c, cookie_manager)))
     
-    # URL Handler
+    # URL Handler (group 1 so admin handler gets first crack at group 0)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'^https?://'),
         lambda u, c: handle_url(u, c, access_manager, download_queue, mtproto_client)
-    ))
-    
-    # Cleanup Task
-    if app.job_queue:
-        app.job_queue.run_repeating(cleanup_job_task, interval=86400, first=10)
+    ), group=1)
     
     logging.info("🤖 StoryFlow Bot started!")
     app.run_polling()

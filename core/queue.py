@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+import shutil
 from core.storage import is_storage_critical, format_storage_report
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Callable, Any
@@ -97,7 +98,7 @@ class DownloadQueue:
         self._cleanup_task = asyncio.create_task(self._background_cleanup())
         
         # Perform initial startup sweep
-        self._startup_sweep()
+        await asyncio.to_thread(self._startup_sweep)
     
     async def stop(self):
         """Stop all workers gracefully."""
@@ -252,7 +253,8 @@ class DownloadQueue:
                         # job.status is already downloading
                         last_update = current_time
                         if self.status_callback:
-                            asyncio.create_task(self.status_callback(job))
+                            task = asyncio.create_task(self.status_callback(job))
+                            task.add_done_callback(lambda t: t.exception())
 
                     # Execute download
                     # Route Spotlight links to gallery-dl (better support for public videos)
@@ -329,7 +331,6 @@ class DownloadQueue:
             # Cleanup job directory
             if job.job_dir and os.path.exists(job.job_dir):
                 try:
-                    import shutil
                     shutil.rmtree(job.job_dir)
                     logging.info(f"🧹 Cleaned up directory for job {job_id}")
                 except Exception as e:
@@ -369,7 +370,6 @@ class DownloadQueue:
                         try:
                             mtime = entry.stat().st_mtime
                             if current_time - mtime > max_age:
-                                import shutil
                                 shutil.rmtree(entry.path)
                                 logging.info(f"🧹 Removed orphan directory: {entry.name}")
                         except Exception as e:
@@ -392,7 +392,6 @@ class DownloadQueue:
             for entry in os.scandir(self.download_path):
                 if entry.is_dir():
                     # On startup, we assume EVERYTHING is debris as no jobs are active yet
-                    import shutil
                     try:
                         shutil.rmtree(entry.path)
                         count += 1

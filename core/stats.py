@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import threading
 from typing import Dict, Any
 
 STATS_FILE = "data/stats.json"
@@ -13,6 +14,7 @@ class StatsManager:
     def __init__(self):
         os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
         self._stats = self._load_stats()
+        self._lock = threading.Lock()
         
     def _load_stats(self) -> Dict[str, Any]:
         """Load stats from JSON file."""
@@ -37,21 +39,22 @@ class StatsManager:
         """Increment download count for a user and platform."""
         user_id = str(user_id)
         
-        if user_id not in self._stats:
-            self._stats[user_id] = {
-                "total_downloads": 0,
-                "platforms": {}
-            }
+        with self._lock:
+            if user_id not in self._stats:
+                self._stats[user_id] = {
+                    "total_downloads": 0,
+                    "platforms": {}
+                }
+                
+            user_stats = self._stats[user_id]
+            user_stats["total_downloads"] += 1
             
-        user_stats = self._stats[user_id]
-        user_stats["total_downloads"] += 1
-        
-        # Function-level platform stats
-        if platform not in user_stats["platforms"]:
-            user_stats["platforms"][platform] = 0
-        user_stats["platforms"][platform] += 1
-        
-        self._save_stats()
+            # Function-level platform stats
+            if platform not in user_stats["platforms"]:
+                user_stats["platforms"][platform] = 0
+            user_stats["platforms"][platform] += 1
+            
+            self._save_stats()
         
     def get_user_stats(self, user_id: str) -> Dict[str, Any]:
         """Get stats for a specific user."""

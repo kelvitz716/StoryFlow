@@ -4,6 +4,7 @@ import os
 import time
 import logging
 import requests
+import asyncio
 from typing import Dict, List, Optional
 
 from core.rate_limiter import RateLimiter
@@ -72,7 +73,6 @@ class SnapchatDownloader(BaseDownloader):
         # We should make this async or run in executor.
         
         # Simple fix: wrap in asyncio.to_thread for Py3.9+ or run_in_executor
-        import asyncio
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.download_stories, username, job_id)
     

@@ -2,6 +2,7 @@
 import logging
 import random
 import os
+import tempfile
 from typing import Optional
 from telegram import Update, Document
 from telegram.ext import ContextTypes, Application
@@ -43,7 +44,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     url = update.effective_message.text.strip()
     msg = update.effective_message
     
-    # Clear any ghosted UI states when the user explicitly sends a new command/URL
+    # Clear any ghosted UI states when the user explicitly sends a new URL
     context.user_data.pop('awaiting_cookies', None)
 
     # Resolve sender identity
@@ -67,43 +68,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             return
 
-    # Admin input handling
-    action = context.user_data.get('awaiting_action') if context.user_data is not None else None
-    if action and access_manager.is_admin(user_id):
-        if action == 'add_user':
-            target_id = url.strip()
-            if target_id.isdigit() or target_id.startswith('-'):
-                if access_manager.add_user(target_id):
-                    await update.effective_message.reply_text(f"✅ User/Channel `{target_id}` added!")
-                else:
-                    await update.effective_message.reply_text(f"⚠️ User `{target_id}` already allowed.")
-            else:
-                await update.effective_message.reply_text("❌ Invalid ID format.")
-            
-            context.user_data.pop('awaiting_action', None)
-            await send_admin_menu(update.effective_message, user_id, access_manager)
-            return
-
-        elif action == 'remove_user':
-            target_id = url.strip()
-            if access_manager.remove_user(target_id):
-                await update.effective_message.reply_text(f"✅ User `{target_id}` removed.")
-            else:
-                await update.effective_message.reply_text(f"⚠️ User `{target_id}` not found.")
-            
-            context.user_data.pop('awaiting_action', None)
-            await send_admin_menu(update.effective_message, user_id, access_manager)
-            return
-
     # Resolve any shortlinks first
     url = await resolve_shortlink(url)
 
     # Identify platform
     platform = identify_platform(url)
     if platform == "Unknown":
-        # Ignore non-URLs or unrecognised links unless they were expected for an action
-        if action:
-             return
         await update.effective_message.reply_text(
             "🤔 Hmm, I don't recognize that link!\n"
             "I support Snapchat, Instagram, TikTok, Twitter, and Facebook."
@@ -171,6 +141,57 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE, acce
             
     await update.message.reply_text(msg, parse_mode='Markdown')
 
+
+async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                             access_manager: AccessManager) -> None:
+    """Handle plain-text admin input for add/remove user actions.
+    
+    Runs in handler group 0 (before the URL handler) so bare numeric IDs
+    like `-1003589434674` are processed correctly without needing https://.
+    Returns immediately if no admin action is pending, allowing other handlers to run.
+    """
+    if not update.effective_message or not update.effective_message.text:
+        return
+    if not update.effective_user:
+        return
+
+    user_id = str(update.effective_user.id)
+
+    # Only act if this is the admin with a pending action
+    if not access_manager.is_admin(user_id):
+        return
+    action = context.user_data.get('awaiting_action') if context.user_data is not None else None
+    if not action:
+        return
+
+    target_id = update.effective_message.text.strip()
+    msg = update.effective_message
+
+    if action == 'add_user':
+        # Accept plain integers and negative IDs (channels start with -)
+        if target_id.lstrip('-').isdigit():
+            if access_manager.add_user(target_id):
+                response = f"✅ `{target_id}` added to the allowed list."
+            else:
+                response = f"⚠️ `{target_id}` is already allowed."
+        else:
+            response = "❌ Invalid ID format. Send a numeric Telegram ID (e.g. `618026357` or `-1001234567890`)."
+            await msg.reply_text(response, parse_mode='Markdown')
+            return  # Don't clear state — let admin try again
+
+    elif action == 'remove_user':
+        if access_manager.remove_user(target_id):
+            response = f"✅ `{target_id}` removed from the allowed list."
+        else:
+            response = f"⚠️ `{target_id}` was not in the allowed list."
+    else:
+        return
+
+    context.user_data.pop('awaiting_action', None)
+    await msg.reply_text(response, parse_mode='Markdown')
+    # Send fresh admin menu so the admin can continue managing users
+    await send_admin_menu(msg, user_id, access_manager, is_new_message=True)
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, cookie_manager: CookieManager) -> None:
     """Handle document (cookie file) upload."""
     document: Document = update.message.document
@@ -185,7 +206,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
         await update.message.reply_text("📎 I wasn't expecting a cookie file. Go to 'Manage Cookies' first.")
         return
     
-    context.user_data['awaiting_cookies'] = False
+    # Clear the awaiting state immediately so re-sending a file works cleanly
+    context.user_data.pop('awaiting_cookies', None)
     
     if not document.file_name.endswith('.txt'):
         await update.message.reply_text("❌ Please send a .txt file.")
@@ -193,8 +215,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
     
     status_msg = await update.message.reply_text(f"⏳ Processing {awaiting_platform.title()} cookies...")
     
+    temp_path = None
     try:
-        import tempfile
         file = await document.get_file()
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tf:
             temp_path = tf.name
@@ -203,14 +225,23 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
         result = cookie_manager.save_cookie_file(user_id, awaiting_platform, temp_path)
         
         if result['success']:
-            msg = f"✅ *{awaiting_platform.title()} Cookies Saved!*\nValid until: {result.get('expiry_str', 'Unknown')}"
+            expiry = result.get('expiry_str', 'Unknown')
+            expired_warning = "\n⚠️ _This cookie is already expired!_" if result.get('is_expired') else ""
+            msg = f"✅ *{awaiting_platform.title()} Cookies Saved!*\nValid until: {expiry}{expired_warning}"
             await status_msg.edit_text(msg, parse_mode='Markdown')
         else:
             await status_msg.edit_text(f"❌ Failed: {result.get('error')}")
-        
-        if os.path.exists(temp_path): os.remove(temp_path)
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Error: {str(e)}")
+    finally:
+        # Always clean up temp file, even on error
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    # Return user to the cookies menu so they can see updated status
+    await send_cookies_menu(update.message, user_id, cookie_manager, is_new_message=True)
+
+
 
 async def get_auth_code(application: Application, access_manager: AccessManager) -> str:
     global AUTH_PENDING, AUTH_TYPE, AUTH_ADMIN_ID

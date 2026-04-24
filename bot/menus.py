@@ -70,17 +70,23 @@ async def send_cookies_menu(target, user_id: str, cookie_manager, is_new_message
     """Send the cookie management menu."""
     cookies = cookie_manager.list_cookies(user_id) if cookie_manager else []
     
+    PLATFORM_EMOJI = {
+        'instagram': '\U0001f4f8',  # 📸
+        'facebook':  '\U0001f4d8',  # 📘
+        'tiktok':    '\U0001f3b5',  # 🎵
+    }
+
     if cookies:
-        lines = ["🍪 *Your Cookies*\n"]
+        lines = ["\U0001f36a *Your Cookies*\n"]
         for c in cookies:
-            emoji = "📸" if c['platform'] == 'instagram' else "📘"
-            status = "⚠️ Expired" if c.get('is_expired') else "✅ Active"
+            emoji = PLATFORM_EMOJI.get(c['platform'], '\U0001f4c4')
+            status = "\u26a0\ufe0f Expired" if c.get('is_expired') else "\u2705 Active"
             lines.append(f"{emoji} {c['platform'].title()}: {status}")
-            lines.append(f"   📅 {c.get('expiry_str', 'Unknown')}\n")
+            lines.append(f"   \U0001f4c5 {c.get('expiry_str', 'Unknown')}\n")
         text = "\n".join(lines)
     else:
         text = (
-            "🍪 *Cookie Manager*\n\n"
+            "\U0001f36a *Cookie Manager*\n\n"
             "No cookies saved yet!\n\n"
             "Cookies let you download content that requires login\n"
             "(like Instagram stories or Facebook reels)."

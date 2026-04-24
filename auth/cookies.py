@@ -3,8 +3,9 @@
 import os
 import shutil
 import logging
+import re
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class CookieManager:
@@ -22,7 +23,6 @@ class CookieManager:
     
     def _sanitize_name(self, name: str) -> str:
         """Sanitize a name to prevent directory traversal (only allow alphanumeric, underscore, and dash)."""
-        import re
         # Remove any characters that aren't alphanumeric, underscore, or dash
         sanitized = re.sub(r'[^\w\-]', '', name)
         # Fallback to 'unknown' if empty
@@ -135,8 +135,8 @@ class CookieManager:
                                 if expiry_unix == 0:
                                     return {'expiry': None, 'expiry_str': 'Session (browser close)', 'is_expired': False}
                                 
-                                expiry_date = datetime.fromtimestamp(expiry_unix)
-                                is_expired = expiry_date < datetime.now()
+                                expiry_date = datetime.fromtimestamp(expiry_unix, tz=timezone.utc)
+                                is_expired = expiry_date < datetime.now(tz=timezone.utc)
                                 
                                 return {
                                     'expiry': expiry_date,
@@ -232,19 +232,31 @@ class CookieManager:
             List of cookie file info dicts with expiry info
         """
         cookies = []
-        for filename in os.listdir(self.cookie_path):
-            if filename.endswith('.txt'):
-                parts = filename[:-4].split('_', 1)  # Remove .txt and split
-                if len(parts) == 2:
-                    platform, uid = parts
-                    if user_id is None or uid == user_id:
-                        cookie_path = os.path.join(self.cookie_path, filename)
-                        expiry_info = self._get_cookie_expiry(cookie_path, platform)
-                        cookies.append({
-                            'platform': platform,
-                            'user_id': uid,
-                            'path': cookie_path,
-                            'expiry_str': expiry_info.get('expiry_str', 'Unknown'),
-                            'is_expired': expiry_info.get('is_expired', False)
-                        })
+        try:
+            filenames = os.listdir(self.cookie_path)
+        except OSError:
+            return cookies
+
+        for filename in filenames:
+            if not filename.endswith('.txt'):
+                continue
+            # Expected format: {platform}_{user_id}.txt
+            # Skip files that don't match (e.g. 'instagram.txt', '.gitkeep')
+            stem = filename[:-4]  # strip .txt
+            if '_' not in stem:
+                continue
+            platform, uid = stem.split('_', 1)
+            if not platform or not uid:
+                continue
+            if user_id is not None and uid != self._sanitize_name(user_id):
+                continue
+            cookie_path = os.path.join(self.cookie_path, filename)
+            expiry_info = self._get_cookie_expiry(cookie_path, platform)
+            cookies.append({
+                'platform': platform,
+                'user_id': uid,
+                'path': cookie_path,
+                'expiry_str': expiry_info.get('expiry_str', 'Unknown'),
+                'is_expired': expiry_info.get('is_expired', False)
+            })
         return cookies

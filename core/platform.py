@@ -77,20 +77,4 @@ def extract_snapchat_username(url: str) -> Optional[str]:
         return None
 
 
-def parse_url(url: str) -> Tuple[str, Optional[str]]:
-    """
-    Parse URL to identify platform and extract relevant data.
-    
-    Args:
-        url: Input URL
-        
-    Returns:
-        Tuple of (platform, username_or_None)
-    """
-    platform = identify_platform(url)
-    
-    if platform == "Snapchat":
-        username = extract_snapchat_username(url)
-        return platform, username
-    
-    return platform, None
+

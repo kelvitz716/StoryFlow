@@ -52,7 +52,7 @@ def validate_domain(url: str, allowed_domains: list[str]) -> bool:
             hostname = hostname.split(':')[0]
             
         # Remove www.
-        hostname = hostname.replace('www.', '')
+        hostname = hostname.removeprefix('www.')
         
         for domain in allowed_domains:
             if hostname == domain or hostname.endswith('.' + domain):

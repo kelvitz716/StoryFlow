@@ -109,15 +109,6 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-        except Exception as e:
-            logging.error(f"❌ Unexpected error: {e}")
-            return {
-                'success': False,
-                'error': 'Unexpected error',
-                'details': str(e),
-                'platform': platform
-            }
-    
     async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).

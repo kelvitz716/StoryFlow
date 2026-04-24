@@ -84,7 +84,7 @@ class BaseDownloader:
                                             progress_callback(f"Downloading: {percent} (ETA {eta})")
                                         else:
                                             progress_callback(f"Downloading: {percent}")
-                                    except:
+                                    except Exception:
                                         pass
                                 
                                 # gallery-dl style (usually just filenames outputted)
