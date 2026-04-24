@@ -197,6 +197,17 @@ class DownloadQueue:
             if j.status == JobStatus.QUEUED and j.created_at < job.created_at:
                 pos += 1
         return pos
+
+    def get_stats(self) -> dict:
+        """Return a snapshot of current queue statistics for public use."""
+        active = [j for j in self._jobs.values()
+                  if j.status in (JobStatus.DOWNLOADING, JobStatus.UPLOADING)]
+        return {
+            'pending': self._queue.qsize(),
+            'active': len(active),
+            'max_concurrent': self.max_concurrent,
+            'active_jobs': active,
+        }
     
     async def _worker(self, worker_id: int):
         """Worker that processes jobs from the queue."""

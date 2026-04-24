@@ -86,14 +86,26 @@ class CookieManager:
             file_path: Path to cookie file
             
         Returns:
-            True if valid, False otherwise
+            True if valid Netscape cookie file with at least one well-formed entry.
         """
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-                # Basic validation: check for cookie structure
-                # Netscape format has tab-separated values
-                return '# Netscape HTTP Cookie File' in content or '\t' in content
+            
+            # Must have the Netscape header
+            if '# Netscape HTTP Cookie File' not in content:
+                return False
+            
+            # Must have at least one well-formed cookie line (7 tab-separated fields)
+            for line in content.splitlines():
+                line = line.strip()
+                if line.startswith('#') or not line:
+                    continue
+                parts = line.split('\t')
+                if len(parts) >= 7:
+                    return True
+            
+            return False
         except Exception:
             return False
     

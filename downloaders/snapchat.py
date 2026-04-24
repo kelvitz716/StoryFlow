@@ -51,12 +51,11 @@ class SnapchatDownloader(BaseDownloader):
         # Spotlight links are public and might be handled differently, 
         # but for now we try to extract username or handle special cases
         if "/spotlight/" in url:
-             # Spotlight usually requires gallery-dl as per previous logic in bot
-             # But if we are here, we are using SnapchatDownloader.
-             # If SnapchatDownloader doesn't support Spotlight, we should fail or fallback.
-             # Ideally, the bot routing should have sent this to gallery-dl.
-             # However, let's assume this downloader is for User Stories.
-             pass
+             return {
+                 'success': False,
+                 'error': 'Spotlight URLs must be routed to gallery-dl, not SnapchatDownloader',
+                 'platform': 'Snapchat'
+             }
 
         username = extract_snapchat_username(url)
         if not username:

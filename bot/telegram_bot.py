@@ -39,7 +39,7 @@ from bot.handlers import (
     handle_auth_input, get_auth_code, get_auth_password
 )
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES, pop_job_message
 
 # Global Components
 snapchat: Optional[SnapchatDownloader] = None
@@ -80,12 +80,12 @@ async def update_job_status(application: Application, job: DownloadJob):
             
         elif job.status == JobStatus.COMPLETED:
             stats_manager.increment_download(job.user_id, job.platform)
-            JOB_MESSAGES.pop(job.job_id, None)
+            pop_job_message(job.job_id)
                 
         elif job.status == JobStatus.FAILED:
             error_text = format_error_message(job.error or "Unknown failure", job.platform)
             await status_msg.edit_text(error_text, parse_mode='Markdown')
-            JOB_MESSAGES.pop(job.job_id, None)
+            pop_job_message(job.job_id)
                 
     except Exception as e:
         logging.error(f"Failed to update status message for job {job.job_id}: {e}")

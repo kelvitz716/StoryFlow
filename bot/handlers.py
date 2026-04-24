@@ -12,7 +12,7 @@ from auth.access import AccessManager
 from auth.cookies import CookieManager  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES, resolve_shortlink
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink
 import asyncio
 import time
 
@@ -96,7 +96,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         
         if job:
-            JOB_MESSAGES[job.job_id] = status_msg
+            register_job_message(job.job_id, status_msg)
             pos = download_queue.get_queue_position(job.job_id)
             if pos > 0:
                  await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\nWaiting for worker...", parse_mode='Markdown')
@@ -124,12 +124,13 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE, acce
         return
         
     # Get active jobs
-    pending = download_queue._queue.qsize()
-    active_jobs = [j for j in download_queue._jobs.values() if str(j.status.value) in ('downloading', 'uploading')]
+    stats = download_queue.get_stats()
+    pending = stats['pending']
+    active_jobs = stats['active_jobs']
     
     msg = (
         f"📊 *Queue Status*\n\n"
-        f"🔄 *Active Jobs:* {len(active_jobs)}/{download_queue.max_concurrent}\n"
+        f"🔄 *Active Jobs:* {stats['active']}/{stats['max_concurrent']}\n"
         f"⏳ *Pending in Queue:* {pending}\n"
     )
     

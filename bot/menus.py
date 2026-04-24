@@ -56,8 +56,7 @@ async def send_help_menu(target, is_new_message: bool = True):
          InlineKeyboardButton("📸 Instagram", callback_data="help_instagram")],
         [InlineKeyboardButton("🎵 TikTok", callback_data="help_tiktok"),
          InlineKeyboardButton("📘 Facebook", callback_data="help_facebook")],
-        [InlineKeyboardButton("🐦 Twitter/X", callback_data="help_twitter"),
-         InlineKeyboardButton("⚠️ Purge System", callback_data="menu_purge_confirm")],
+        [InlineKeyboardButton("🐦 Twitter/X", callback_data="help_twitter")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
     
