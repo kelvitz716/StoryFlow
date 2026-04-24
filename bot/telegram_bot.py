@@ -40,7 +40,8 @@ from bot.handlers import (
 )
 from bot.uploader import batch_upload_media
 from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES, pop_job_message
-
+from core.database import db
+from core.migrations import run_migrations
 # Global Components
 snapchat: Optional[SnapchatDownloader] = None
 gallery_dl: Optional[GalleryDLDownloader] = None
@@ -253,6 +254,9 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
         logging.error("❌ ADMIN_USER_ID not set!")
         sys.exit(1)
         
+    # Run DB migrations BEFORE AccessManager checks state
+    run_migrations(db)
+        
     access_manager = AccessManager(admin_id=admin_id)
     cookie_manager = CookieManager(cookie_path=cookie_path)
     
@@ -281,6 +285,9 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, api_base_
             gallery_dl_downloader=gallery_dl,
             status_callback=lambda job: update_job_status(application, job)
         )
+        
+        # Recover orphaned jobs from previous crash
+        await download_queue.recover_orphaned_jobs(application.bot)
     
     async def post_stop(application):
         if download_queue: await download_queue.stop()

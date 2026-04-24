@@ -92,7 +92,9 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             user_id=user_id,
             url=url,
             platform=platform,
-            upload_func=upload_func
+            upload_func=upload_func,
+            chat_id=str(update.effective_chat.id),
+            message_id=msg.message_id
         )
         
         if job:
@@ -107,6 +109,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
     user_id = str(update.effective_user.id)
+    chat_id = str(update.effective_chat.id)
+    access_manager.register_chat_id(user_id, chat_id)
     await send_main_menu(update.message, user_id, access_manager, is_new_message=True)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
