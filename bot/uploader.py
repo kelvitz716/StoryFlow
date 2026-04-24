@@ -63,11 +63,12 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         if batch_idx > 0:
             await asyncio.sleep(5)
 
-        # Check for large files in batch (>50MB Bot API Limit)
+        # Check for Bot API limits (Per file >50MB OR Total Payload >45MB to be safe)
         large_files = [f for f in batch if os.path.exists(f) and os.path.getsize(f) > 50 * 1024 * 1024]
+        total_batch_size = sum([os.path.getsize(f) for f in batch if os.path.exists(f)])
         
-        # MTProto Fallback: Use it if forced (large files) OR if we previously hit rate limits
-        use_mtproto = force_mtproto_fallback or bool(large_files and mtproto_client and mtproto_client.is_connected)
+        # MTProto Fallback: Use it if forced OR if any limit is hit
+        use_mtproto = force_mtproto_fallback or bool((large_files or total_batch_size > 45 * 1024 * 1024) and mtproto_client and mtproto_client.is_connected)
         
         if use_mtproto:
             logging.info(f"📤 Batch {batch_idx+1} using MTProto rescue.")
