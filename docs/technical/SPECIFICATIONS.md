@@ -36,9 +36,9 @@ pip install python-telegram-bot
 Create a `.env` file:
 
 ```env
-# Snapchat API Configuration
-SNAPCHAT_API_BASE_URL=https://snapstories.netlify.app/api
-SNAPCHAT_API_KEY=your_api_key_here
+# Snapchat via Apify (crawlerbros/snapchat-user-stories-scraper)
+# Get token at: https://console.apify.com/settings/integrations
+APIF_TOKEN=apify_api_xxxxxxxxxxxxxxxxxxxx
 
 # Download Configuration
 DOWNLOAD_PATH=./downloads
@@ -211,94 +211,52 @@ def create_retry_decorator(max_attempts=3, initial_wait=2, max_wait=60):
 
 ## 5. Snapchat Download Handler
 
-### 5.1 SnapStory DL API Integration
+### 5.1 Apify Actor Integration
+
+Snapchat story downloads are delegated to the Apify cloud platform. The `crawlerbros/snapchat-user-stories-scraper` actor runs a fully managed Playwright session on Apify's infrastructure, bypassing Snapchat's SPA protections without any headless browser overhead on your server.
+
+**Actor:** `crawlerbros/snapchat-user-stories-scraper`  
+**Endpoint:** `https://api.apify.com/v2/acts/crawlerbros~snapchat-user-stories-scraper/run-sync-get-dataset-items`  
+**Pricing:** $1.00 / 1,000 results (Free tier: $5/month credit)
 
 ```python
-import requests
-import os
-import logging
-from typing import Optional, Dict
-
 class SnapchatDownloader(BaseDownloader):
-    """Handler for Snapchat downloads using SnapStory DL API."""
-    
-    def __init__(self, api_base_url: str, output_path: str = './downloads'):
+    """Handler for Snapchat downloads via Apify cloud actor."""
+
+    def __init__(self, apify_token: str, output_path: str = './downloads'):
         super().__init__(output_path)
-        self.api_base_url = api_base_url.rstrip('/')
+        self.apify_token = apify_token
         self.rate_limiter = RateLimiter(max_requests=30)
         self.session = requests.Session()
-    
-    async def download(self, url: str, job_id: str) -> Dict:
-        """
-        Unified download entry point (Async).
-        Wraps the synchronous API requests in a thread executor.
-        """
-        username = extract_username(url)
+
+    async def download(self, url: str, user_id: str, job_id: str) -> Dict:
+        """Queue-compatible async entry point."""
+        username = extract_snapchat_username(url)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.download_stories, username, job_id)
-```
-                
-                if media_url:
-                    # Download actual media file
-                    filename = self._download_media_file(media_url, output_path)
-                    
-                    logging.info(f"✅ Snapchat story downloaded: {filename}")
-                    return {
-                        'success': True,
-                        'platform': 'Snapchat',
-                        'filename': filename,
-                        'media_url': media_url
-                    }
-                else:
-                    raise ValueError("No media URL in API response")
-            else:
-                error_msg = data.get('error') or data.get('message') or 'Unknown error'
-                raise ValueError(f"API returned error: {error_msg}")
-                
-        except requests.exceptions.HTTPError as e:
-            logging.error(f"❌ HTTP Error {e.response.status_code}: {e.response.text}")
-            return {
-                'success': False,
-                'error': f"HTTP {e.response.status_code}",
-                'details': e.response.text
-            }
-            
-        except requests.exceptions.RequestException as e:
-            logging.error(f"❌ Network error: {e}")
-            return {
-                'success': False,
-                'error': 'Network error',
-                'details': str(e)
-            }
-            
-        except Exception as e:
-            logging.error(f"❌ Unexpected error: {e}")
-            return {
-                'success': False,
-                'error': 'Unexpected error',
-                'details': str(e)
-            }
-    
-    def _download_media_file(self, media_url: str, output_path: str) -> str:
-        """Download media file from direct URL."""
-        os.makedirs(output_path, exist_ok=True)
-        
-        response = self.session.get(media_url, stream=True, timeout=60)
-        response.raise_for_status()
-        
-        # Generate filename
-        filename = os.path.join(
-            output_path,
-            f"snapchat_{int(time.time())}.mp4"
+
+    def _fetch_stories(self, username: str) -> List[Dict]:
+        """POST to Apify sync endpoint and return normalised story list."""
+        response = self.session.post(
+            "https://api.apify.com/v2/acts/crawlerbros~snapchat-user-stories-scraper"
+            "/run-sync-get-dataset-items",
+            params={"token": self.apify_token},
+            json={"usernames": [username], "maxSnapsPerUser": 50},
+            timeout=120,
         )
-        
-        # Download with progress
-        with open(filename, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
-        return filename
+        response.raise_for_status()
+        # Returns list of dataset items; each contains mediaUrl, mediaType, timestamp
+        return self._normalise(response.json())
 ```
+
+**Error handling:**
+
+| HTTP Status | Meaning | Bot Response |
+|---|---|---|
+| `200` | Success | Stories downloaded |
+| `402` | Apify quota exhausted | User-friendly quota message |
+| `429` | Rate limited | Retry hint message |
+| `5xx` | Apify actor error | Generic network error message |
 
 ---
 
@@ -446,8 +404,7 @@ def main_cli():
     
     # Initialize components
     snapchat = SnapchatDownloader(
-        api_base_url=os.getenv('SNAPCHAT_API_BASE_URL'),
-        api_key=os.getenv('SNAPCHAT_API_KEY')
+        apify_token=os.getenv('APIFY_TOKEN', ''),
     )
     
     gallery_dl = GalleryDLDownloader(

@@ -55,11 +55,26 @@ If you prefer to run directly on your host:
     - `TELEGRAM_BOT_TOKEN`: From @BotFather.
     - `ADMIN_USER_ID`: Your Telegram ID (to authorize commands).
     - `MODE=telegram`: To run the bot.
+    - `APIFY_TOKEN`: Your Apify API token for Snapchat story downloads (see below).
 
 4.  **Start the Bot**:
     ```bash
     python storyflow.py
     ```
+
+## Apify Setup (Snapchat Stories)
+
+Snapchat story downloads are powered by the **Apify** cloud scraping platform (`crawlerbros/snapchat-user-stories-scraper` actor). This eliminates the need to run a headless browser on your server.
+
+1. Create a free account at [apify.com](https://apify.com). The free tier provides **$5 credit/month**, which is sufficient for typical personal bot usage.
+2. Go to [console.apify.com/settings/integrations](https://console.apify.com/settings/integrations) and copy your **Personal API token**.
+3. Add it to your `.env`:
+   ```env
+   APIFY_TOKEN=apify_api_xxxxxxxxxxxxxxxxxxxx
+   ```
+
+> [!TIP]
+> Pricing is pay-per-use at **$1.00 / 1,000 results**. The free monthly credit translates to ~5,000 story downloads before any charges apply.
 
 ## MTProto Setup (Large Files)
 

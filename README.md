@@ -84,6 +84,7 @@ StoryFlow/
 |----------|-------------|---------|
 | `MODE` | `cli` or `telegram` | `cli` |
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather | - |
+| `APIFY_TOKEN` | Apify API token for Snapchat downloads | - |
 | `DOWNLOAD_PATH` | Temp download directory | `./downloads` |
 | `COOKIE_PATH` | Cookie storage | `./cookies` |
 
@@ -109,7 +110,8 @@ To upload files >50MB (up to 2GB), configure Telegram MTProto:
 
 - **Interactive Menu**: Button-based navigation
 - **Cookie Management**: Upload/manage Instagram & Facebook cookies
-- **Smart Downloading**: Uses `gallery-dl` with `yt-dlp` fallback
+- **Smart Downloading**: Uses `gallery-dl` with `yt-dlp` fallback for Instagram/TikTok/Facebook/Twitter
+- **Snapchat Support**: Cloud-powered via [Apify](https://apify.com) (`crawlerbros/snapchat-user-stories-scraper`) — no headless browser required on your server
 - **Large Files**: Uploads up to 2GB via MTProto with progress bar
 - **Auto-Cleanup**: Deletes files immediately after upload
 

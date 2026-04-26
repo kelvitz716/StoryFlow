@@ -108,13 +108,13 @@ async def main_cli():
     setup_logging()
     
     # Get configuration
-    api_base_url = os.getenv('SNAPCHAT_API_BASE_URL', 'https://snapstories.netlify.app')
+    apify_token = os.getenv('APIFY_TOKEN', '')
     download_path = os.getenv('DOWNLOAD_PATH', './downloads')
     cookie_path = os.getenv('COOKIE_PATH', './cookies')
     
     # Initialize downloaders
     snapchat = SnapchatDownloader(
-        api_base_url=api_base_url,
+        apify_token=apify_token,
         output_path=download_path
     )
     
@@ -205,13 +205,13 @@ def main_telegram():
         print("   TELEGRAM_BOT_TOKEN=your_bot_token_here")
         sys.exit(1)
     
-    api_base_url = os.getenv('SNAPCHAT_API_BASE_URL', 'https://snapstories.netlify.app')
+    apify_token = os.getenv('APIFY_TOKEN', '')
     download_path = os.getenv('DOWNLOAD_PATH', './downloads')
     cookie_path = os.getenv('COOKIE_PATH', './cookies')
     
     # Import and run bot
     from bot.telegram_bot import run_telegram_bot
-    run_telegram_bot(token, download_path, cookie_path, api_base_url)
+    run_telegram_bot(token, download_path, cookie_path, apify_token)
 
 
 def main():

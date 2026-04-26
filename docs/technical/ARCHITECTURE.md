@@ -17,6 +17,9 @@ graph TD
     Worker -->|Insta/TikTok/FB| GalleryDL[Gallery-DL Wrapper]
     SnapDL & GalleryDL -->|Inherits| BaseDL[BaseDownloader]
     GalleryDL -->|Fallback| YTDLP[yt-dlp Wrapper]
+
+    SnapDL -->|HTTP POST| Apify[Apify Cloud Actor]
+    Apify -->|JSON dataset| SnapDL
     
     Worker -->|Success/Files| Uploader[bot/uploader.py]
     Uploader -->|Small Files <50MB| TelegramAPI[Telegram Bot API]
@@ -42,8 +45,8 @@ Modularized for high-performance interaction and maintainability.
 ### 3. Downloaders (`downloaders/`)
 - **BaseDownloader**: Abstract class consolidating shared execution logic, directory preparation, and error tracking.
 - **Job Isolation**: Every download job creates a unique subdirectory `downloads/{job_id}/` to prevent media leakage.
-- **Snapchat**: API client for fetching Snap stories (`snapchat.py`). Inherits from `BaseDownloader`.
-- **Gallery-DL**: Wrapper around the `gallery-dl` CLI tool (`gallery_dl.py`). Inherits from `BaseDownloader`.
+- **Snapchat** (`snapchat.py`): Delegates to the Apify `crawlerbros/snapchat-user-stories-scraper` cloud actor via a single synchronous HTTP POST. The actor runs a fully managed Playwright/Chromium session on Apify's infrastructure, returning a JSON dataset of direct media URLs. Your server never hits Snapchat directly. Inherits from `BaseDownloader`.
+- **Gallery-DL** (`gallery_dl.py`): Wrapper around the `gallery-dl` CLI tool. Inherits from `BaseDownloader`.
   - Implements `yt-dlp` fallback for high-reliability fetching.
 
 ### 4. Authentication (`auth/`)

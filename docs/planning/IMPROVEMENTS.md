@@ -29,6 +29,12 @@ Previously, synchronous `subprocess` calls would freeze the entire bot event loo
 - **User Queues**: Increased the `max_per_user` threshold to 10 instances allowing massive multi-batch queueing.
 - **Live Dashboard**: Added a `/queue` endpoint for live visibility into active workers and pending tasks without digging into logs.
 
+### 6. Snapchat Backend Migration — Apify [RESOLVED]
+The community-hosted `snapstories.netlify.app` API was permanently decommissioned (HTTP 404). The `snapchat-dlp` pip package was also verified broken due to Snapchat's SPA architecture changes.
+- **Solution**: Replaced the custom API wrapper with the Apify `crawlerbros/snapchat-user-stories-scraper` cloud actor. The actor runs a fully managed Playwright/Chromium session on Apify's infrastructure and returns a JSON dataset of direct media URLs via a single HTTP POST.
+- **Impact**: Zero memory overhead on the AWS server, no headless browser required, identical return dict shape so the rest of the bot required no changes.
+- **Config**: `SNAPCHAT_API_BASE_URL` env var replaced with `APIFY_TOKEN`.
+
 ---
 
 ## 🚀 Future Roadmap & Long-term Goals
@@ -36,4 +42,4 @@ Previously, synchronous `subprocess` calls would freeze the entire bot event loo
 (No outstanding tasks currently identified for the core roadmap. System is operating at full functional capacity.)
 
 ---
-*Last updated: 2026-04-11*
+*Last updated: 2026-04-26*
