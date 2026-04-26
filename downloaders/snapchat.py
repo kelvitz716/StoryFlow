@@ -120,13 +120,13 @@ class SnapchatDownloader(BaseDownloader):
             stories_items = []
             highlights_items = []
 
-            # 1. Active Stories
-            if "/stories/" in url.lower() or "/story." in url.lower() or "story.snapchat.com" in url.lower():
+            # 1. Active Stories (now defaults to /add/ as well)
+            if "/stories/" in url.lower() or "/story." in url.lower() or "story.snapchat.com" in url.lower() or "/add/" in url.lower():
                 logging.info(f"🔍 URL mapped to ACTIVE STORIES for @{username}")
                 stories_items = self._fetch_actor(_ACTOR_STORIES, username, "stories")
 
-            # 2. Saved Highlights
-            elif "/add/" in url.lower():
+            # 2. Saved Highlights (custom trigger)
+            elif "/highlight/" in url.lower():
                 logging.info(f"🔍 URL mapped to SAVED HIGHLIGHTS for @{username}")
                 highlights_items = self._fetch_actor(_ACTOR_HIGHLIGHTS, username, "highlights")
 

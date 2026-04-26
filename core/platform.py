@@ -59,10 +59,10 @@ def extract_snapchat_username(url: str) -> Optional[str]:
             logging.warning(f"Invalid Snapchat URL format: {url}")
             return None
         
-        # Expected patterns: /add/username, /stories/username, /spotlight/username
+        # Expected patterns: /add/username, /stories/username, /spotlight/username, /highlight/username
         action = segments[0].lower()
         
-        if action in ('add', 'stories', 'spotlight'):
+        if action in ('add', 'stories', 'spotlight', 'highlight'):
             username = segments[1]
             # Clean username (remove trailing 'l' from some share links)
             if len(segments) > 2 and segments[2] == 'l':
