@@ -4,7 +4,7 @@ import logging
 import asyncio
 from typing import List, Optional
 from telegram import Update, InputMediaPhoto, InputMediaVideo
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, NetworkError, TimedOut
 
 import time
 
@@ -111,7 +111,13 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                 break
 
             try:
-                await update.effective_message.reply_media_group(media=media_group)
+                # Increased timeout values specifically for heavy video batch sizes
+                await update.effective_message.reply_media_group(
+                    media=media_group,
+                    read_timeout=120,
+                    write_timeout=120,
+                    pool_timeout=120
+                )
                 uploaded_count += len(batch)
                 break
             except RetryAfter as e:
@@ -121,10 +127,20 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                 
                 await safe_edit_text(status_msg, f"⏳ *Waiting...*\n({wait_time}s to resume)")
                 await asyncio.sleep(wait_time)
+            except (NetworkError, TimedOut) as e:
+                attempts += 1
+                logging.warning(f"⚠️ Network timeout ({e}). Retrying (Attempt {attempts}/{max_attempts})...")
+                await asyncio.sleep(5)
             except Exception as e:
-                logging.error(f"❌ Batch upload failed: {e}")
-                failed_count += len(batch)
-                break
+                error_str = str(e).lower()
+                if "readerror" in error_str or "timeout" in error_str or "httpx" in error_str:
+                    attempts += 1
+                    logging.warning(f"⚠️ Network stream disconnected ({e}). Retrying (Attempt {attempts}/{max_attempts})...")
+                    await asyncio.sleep(5)
+                else:
+                    logging.error(f"❌ Batch upload failed: {e}")
+                    failed_count += len(batch)
+                    break
             finally:
                 # Close file handles safely
                 for media in media_group:
