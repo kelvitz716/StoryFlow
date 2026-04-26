@@ -92,7 +92,7 @@ class SnapchatDownloader(BaseDownloader):
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, self.download_stories, username, job_id
+            None, self.download_stories, username, url, job_id
         )
 
     # ------------------------------------------------------------------
@@ -100,7 +100,7 @@ class SnapchatDownloader(BaseDownloader):
     # ------------------------------------------------------------------
 
     def download_stories(
-        self, username: str, job_id: Optional[str] = None
+        self, username: str, url: str, job_id: Optional[str] = None
     ) -> Dict:
         """Fetch stories + highlights from Apify, download all media files.
 
@@ -115,13 +115,25 @@ class SnapchatDownloader(BaseDownloader):
         os.makedirs(job_output_path, exist_ok=True)
 
         try:
-            # --- Fetch from both actors concurrently (via threads) ------
-            logging.info(
-                f"📡 Fetching stories & highlights for @{username} via Apify…"
-            )
+            logging.info(f"📡 Fetching content for @{username} via Apify…")
 
-            stories_items    = self._fetch_actor(_ACTOR_STORIES,    username, "stories")
-            highlights_items = self._fetch_actor(_ACTOR_HIGHLIGHTS, username, "highlights")
+            stories_items = []
+            highlights_items = []
+
+            # 1. Active Stories
+            if "/stories/" in url.lower() or "/story." in url.lower() or "story.snapchat.com" in url.lower():
+                logging.info(f"🔍 URL mapped to ACTIVE STORIES for @{username}")
+                stories_items = self._fetch_actor(_ACTOR_STORIES, username, "stories")
+
+            # 2. Saved Highlights
+            elif "/add/" in url.lower():
+                logging.info(f"🔍 URL mapped to SAVED HIGHLIGHTS for @{username}")
+                highlights_items = self._fetch_actor(_ACTOR_HIGHLIGHTS, username, "highlights")
+
+            # 3. Fallback (Call Stories if format is unknown)
+            else:
+                logging.info(f"🔍 URL format ambiguous — defaulting to ACTIVE STORIES for @{username}")
+                stories_items = self._fetch_actor(_ACTOR_STORIES, username, "stories")
 
             # Merge and deduplicate by mediaUrl
             all_items = self._merge(stories_items, highlights_items)
@@ -260,7 +272,17 @@ class SnapchatDownloader(BaseDownloader):
           timestamp (str)  — ISO8601 or epoch string
         """
         result: List[Dict] = []
+        
+        # Flatten nested 'snaps' arrays if present (igview-owner structure)
+        flat_items = []
         for item in raw_items:
+            if "snaps" in item and isinstance(item["snaps"], list):
+                # Inherit top-level metadata if useful later, but mediaUrl is in the snap
+                flat_items.extend(item["snaps"])
+            else:
+                flat_items.append(item)
+
+        for item in flat_items:
             media_url = (
                 item.get("mediaUrl")
                 or item.get("url")
