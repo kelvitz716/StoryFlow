@@ -211,49 +211,64 @@ def create_retry_decorator(max_attempts=3, initial_wait=2, max_wait=60):
 
 ## 5. Snapchat Download Handler
 
-### 5.1 Apify Actor Integration
+### 5.1 Dual Apify Actor Integration
 
-Snapchat story downloads are delegated to the Apify cloud platform. The `crawlerbros/snapchat-user-stories-scraper` actor runs a fully managed Playwright session on Apify's infrastructure, bypassing Snapchat's SPA protections without any headless browser overhead on your server.
+Snapchat content is split across two Apify actors. Both are called for every profile URL; results are merged and deduplicated by `mediaUrl` before any files are downloaded.
 
-**Actor:** `crawlerbros/snapchat-user-stories-scraper`  
-**Endpoint:** `https://api.apify.com/v2/acts/crawlerbros~snapchat-user-stories-scraper/run-sync-get-dataset-items`  
-**Pricing:** $1.00 / 1,000 results (Free tier: $5/month credit)
+| Content Type | Actor | Notes |
+|---|---|---|
+| **Stories** (active 24h) | `igview-owner/snapchat-story-viewer` | Handles public creator profiles |
+| **Highlights** (saved albums) | `crawlerbros/snapchat-user-stories-scraper` | Returns `storyTitle`, `highlightId`, rich metadata |
+| **Spotlight** (`/spotlight/` URL) | **Not via Apify** — routed by `queue.py` to `yt-dlp` (`SnapchatSpotlight` extractor) | No Apify cost |
+
+**Endpoint (both actors):** `https://api.apify.com/v2/acts/<actor>/run-sync-get-dataset-items`  
+**Pricing:** Stories actor = $5.00/1,000 results · Highlights actor = $1.00/1,000 results  
+**Free tier:** $5/month covers typical personal bot usage
 
 ```python
 class SnapchatDownloader(BaseDownloader):
-    """Handler for Snapchat downloads via Apify cloud actor."""
+    """Fetches stories + highlights via two Apify actors; merges results."""
 
     def __init__(self, apify_token: str, output_path: str = './downloads'):
         super().__init__(output_path)
         self.apify_token = apify_token
-        self.rate_limiter = RateLimiter(max_requests=30)
-        self.session = requests.Session()
 
-    async def download(self, url: str, user_id: str, job_id: str) -> Dict:
-        """Queue-compatible async entry point."""
-        username = extract_snapchat_username(url)
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.download_stories, username, job_id)
+    def download_stories(self, username: str, job_id: str = None) -> Dict:
+        """Fetch from both actors, merge+deduplicate, then download files."""
+        stories    = self._fetch_actor(_ACTOR_STORIES,    username, 'stories')
+        highlights = self._fetch_actor(_ACTOR_HIGHLIGHTS, username, 'highlights')
+        all_items  = self._merge(stories, highlights)   # deduplicated by mediaUrl
+        # ... download each item ...
 
-    def _fetch_stories(self, username: str) -> List[Dict]:
-        """POST to Apify sync endpoint and return normalised story list."""
-        response = self.session.post(
-            "https://api.apify.com/v2/acts/crawlerbros~snapchat-user-stories-scraper"
-            "/run-sync-get-dataset-items",
-            params={"token": self.apify_token},
-            json={"usernames": [username], "maxSnapsPerUser": 50},
+    def _fetch_actor(self, actor_id, username, label) -> List[Dict]:
+        """Call one actor; return [] on any failure so the other still works."""
+        resp = self.session.post(
+            f'https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items',
+            params={'token': self.apify_token},
+            json={'usernames': [username], 'maxSnapsPerUser': 50},
             timeout=120,
         )
-        response.raise_for_status()
-        # Returns list of dataset items; each contains mediaUrl, mediaType, timestamp
-        return self._normalise(response.json())
+        resp.raise_for_status()
+        return self._normalise(resp.json())
+
+    def _merge(self, stories, highlights) -> List[Dict]:
+        """Merge two lists, deduplicating by mediaUrl."""
+        seen, merged = set(), []
+        for item in stories + highlights:
+            url = item.get('mediaUrl', '')
+            if url and url not in seen:
+                seen.add(url)
+                merged.append(item)
+        return merged
 ```
+
+**Resilience:** if one actor fails (4xx, timeout), the other actor's results are still returned — users always get partial content rather than a full failure.
 
 **Error handling:**
 
 | HTTP Status | Meaning | Bot Response |
 |---|---|---|
-| `200` | Success | Stories downloaded |
+| `200` | Success | Media downloaded |
 | `402` | Apify quota exhausted | User-friendly quota message |
 | `429` | Rate limited | Retry hint message |
 | `5xx` | Apify actor error | Generic network error message |

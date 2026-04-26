@@ -45,8 +45,12 @@ Modularized for high-performance interaction and maintainability.
 ### 3. Downloaders (`downloaders/`)
 - **BaseDownloader**: Abstract class consolidating shared execution logic, directory preparation, and error tracking.
 - **Job Isolation**: Every download job creates a unique subdirectory `downloads/{job_id}/` to prevent media leakage.
-- **Snapchat** (`snapchat.py`): Delegates to the Apify `crawlerbros/snapchat-user-stories-scraper` cloud actor via a single synchronous HTTP POST. The actor runs a fully managed Playwright/Chromium session on Apify's infrastructure, returning a JSON dataset of direct media URLs. Your server never hits Snapchat directly. Inherits from `BaseDownloader`.
-- **Gallery-DL** (`gallery_dl.py`): Wrapper around the `gallery-dl` CLI tool. Inherits from `BaseDownloader`.
+- **Snapchat** (`snapchat.py`): Calls **two** Apify actors per request and merges results:
+  - `igview-owner/snapchat-story-viewer` → active 24h stories
+  - `crawlerbros/snapchat-user-stories-scraper` → saved highlight albums
+  - Results are deduplicated by `mediaUrl` before downloading.
+  - `/spotlight/` URLs are **not handled here** — `queue.py` detects them and routes directly to `gallery-dl` / `yt-dlp` (`SnapchatSpotlight` extractor).
+- **Gallery-DL** (`gallery_dl.py`): Wrapper around the `gallery-dl` CLI tool. Handles Instagram, TikTok, Facebook, Twitter/X, and Snapchat Spotlight. Inherits from `BaseDownloader`.
   - Implements `yt-dlp` fallback for high-reliability fetching.
 
 ### 4. Authentication (`auth/`)
@@ -56,9 +60,9 @@ Modularized for high-performance interaction and maintainability.
 ## Data Flow
 
 1.  **Input**: User sends a URL.
-2.  **Detection & Queue**: Platform is identified, and a job is submitted to the `DownloadQueue`. Job state is atomically injected into the SQLite `.db`.
+2.  **Detection & Queue**: Platform is identified. Snapchat `/spotlight/` URLs are separated from profile URLs at dispatch time — Spotlight goes straight to `gallery-dl`, profile URLs go to `SnapchatDownloader`.
 3.  **Isolation**: The worker creates a unique `downloads/{job_id}` folder.
-4.  **Execution**: Appropriate wrapper downloads media into the isolated folder.
+4.  **Execution**: Appropriate wrapper downloads media into the isolated folder. For Snapchat profiles, both actors are called; their results are merged and deduplicated before downloading.
 5.  **Multi-Stage Retrieval**: If `gallery-dl` fails, the system automatically falls back to `yt-dlp`.
 6.  **Server Recovery System**: If the core dies mid-download, the next initialization boot fetches hanging jobs from SQLite and delivers error messages directly into user chats.
 7.  **Upload**: `uploader.py` batches files into media groups for delivery.

@@ -18,7 +18,7 @@ Simply **send any supported link** to the bot. StoryFlow uses a specialized **Jo
 
 **Supported Platforms:**
 - **Instagram**: Reels, Stories, Posts (including private content with cookies).
-- **Snapchat**: Public Stories.
+- **Snapchat**: Stories (active 24h), Highlights (saved albums), and Spotlight videos.
 - **TikTok**: High-quality watermark-free videos.
 - **Facebook**: Reels and public videos.
 - **Twitter/X**: Media attachments and GIFs.

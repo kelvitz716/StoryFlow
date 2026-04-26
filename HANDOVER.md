@@ -86,7 +86,11 @@ StoryFlow is a unified media downloader designed for social media content. It su
 ### 4. Snapchat Backend Migration (April 2026)
 - **Old backend** (`snapstories.netlify.app`) confirmed dead (permanent `404`).
 - `snapchat-dlp` pip package also broken (`APIResponseError`) due to Snapchat SPA changes.
-- Migrated to **Apify** (`crawlerbros/snapchat-user-stories-scraper` actor). Cloud-hosted Playwright sessions bypass Snapchat restrictions cleanly with zero memory overhead on the AWS server.
+- Migrated to **Apify** with a dual-actor approach covering all public Snapchat content:
+  - `igview-owner/snapchat-story-viewer` → active 24h stories
+  - `crawlerbros/snapchat-user-stories-scraper` → saved highlight albums
+  - Both called per request; results merged and deduplicated by `mediaUrl`.
+  - `/spotlight/` URLs bypassed to `yt-dlp` (`SnapchatSpotlight` extractor) via `queue.py` — no Apify cost.
 - `SNAPCHAT_API_BASE_URL` env var replaced with `APIFY_TOKEN`.
 
 ---
@@ -101,7 +105,9 @@ StoryFlow is a unified media downloader designed for social media content. It su
 
 
 ## Current Status & Known Limitations
-- **Snapchat**: Powered by Apify cloud actor. Public stories only. Usage is billed at $1.00/1,000 results (free tier covers ~5,000 downloads/month).
+- **Snapchat Stories**: Fetched via `igview-owner/snapchat-story-viewer` Apify actor. Public creator profiles only.
+- **Snapchat Highlights**: Fetched via `crawlerbros/snapchat-user-stories-scraper`. Returns saved story albums with rich metadata.
+- **Snapchat Spotlight**: Routed to `yt-dlp` (built-in `SnapchatSpotlight` extractor). No Apify cost.
 - **Instagram**: Very sensitive to rate limits. Always use fresh cookies for stable story downloading.
 - **Disk Space**: While there is auto-cleanup, failed downloads might leave artifacts. Use the `/purge` command (Admin only) to clear the `downloads/` directory.
 
