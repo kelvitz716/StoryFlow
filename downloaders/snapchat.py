@@ -1,17 +1,22 @@
-"""Snapchat downloader via Apify cloud actors.
+"""Snapchat downloader via story.snapchat.com web scraping.
+
+Scrapes __NEXT_DATA__ JSON embedded in the Snapchat story page — no Apify or
+API key required.
 
 Content-type coverage:
-  - Stories (active 24h)  → igview-owner/snapchat-story-viewer
-  - Highlights (saved)    → crawlerbros/snapchat-user-stories-scraper
+  - Stories (active 24h)  → story.snapList
+  - Highlights (saved)    → curatedHighlights[*].snapList
   - Spotlight             → NOT handled here; queue.py routes /spotlight/ URLs
                             directly to gallery-dl / yt-dlp (SnapchatSpotlight extractor)
 """
 
 import os
+import re
 import time
+import json
 import logging
-import requests
 import asyncio
+import requests
 from typing import Dict, List, Optional
 
 from core.rate_limiter import RateLimiter
@@ -21,41 +26,45 @@ from core.security import sanitize_filename
 from downloaders.base import BaseDownloader
 
 # ---------------------------------------------------------------------------
-# Apify actor endpoints (synchronous run — returns dataset items in one call)
+# Snapchat web endpoint — no auth required for public profiles
 # ---------------------------------------------------------------------------
-_APIFY_BASE = "https://api.apify.com/v2/acts"
-_ACTOR_HIGHLIGHTS = "crawlerbros~snapchat-user-stories-scraper"   # saved story albums
-_ACTOR_STORIES    = "igview-owner~snapchat-story-viewer"          # active 24-h stories
-_SYNC_SUFFIX      = "/run-sync-get-dataset-items"
+_STORY_URL = "https://story.snapchat.com/s/{username}"
+_NEXT_DATA_RE = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+    re.DOTALL,
+)
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 
 
 class SnapchatDownloader(BaseDownloader):
-    """Handler for Snapchat downloads via Apify cloud actors.
+    """Handler for Snapchat downloads via direct story page scraping.
 
-    Fetches both active stories and saved highlights in a single call to the
-    bot, merging the results and deduplicating by mediaUrl so the user gets
-    everything available on the public profile.
+    Fetches both active stories and saved highlights from the public
+    story.snapchat.com page, merging all snaps and deduplicating by mediaUrl.
+    Zero external API accounts or tokens required.
     """
 
-    def __init__(self, apify_token: str, output_path: str = "./downloads"):
+    def __init__(self, apify_token: str = "", output_path: str = "./downloads"):
         """
         Args:
-            apify_token: Apify API token (APIFY_TOKEN env var)
-            output_path: Directory to save downloaded media
+            apify_token: Ignored — kept for API compatibility with existing bot init.
+            output_path: Directory to save downloaded media.
         """
         super().__init__(output_path)
-        self.apify_token = apify_token
+        # apify_token intentionally unused; kept so telegram_bot.py needs zero changes
         self.rate_limiter = RateLimiter(
             max_requests=int(os.getenv("MAX_REQUESTS_PER_MINUTE", 30))
         )
         self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": "StoryFlow/2.0",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            }
-        )
+        self.session.headers.update(_HEADERS)
 
     # ------------------------------------------------------------------
     # Public async entry point (Queue-compatible)
@@ -69,14 +78,13 @@ class SnapchatDownloader(BaseDownloader):
     ) -> Dict:
         """Queue-compatible async entry point.
 
-        Note: Spotlight URLs (/spotlight/...) are NOT routed here — queue.py
-        sends them directly to gallery-dl which uses yt-dlp's SnapchatSpotlight
-        extractor. If one somehow arrives here, return a clear error.
+        Spotlight URLs (/spotlight/...) are NOT routed here — queue.py sends
+        them to gallery-dl. If one somehow arrives, return a clear error.
         """
         if "/spotlight/" in url:
             return {
                 "success": False,
-                "error": "Spotlight URLs are handled by yt-dlp, not the Apify downloader. "
+                "error": "Spotlight URLs are handled by yt-dlp, not the web scraper. "
                          "Please check the URL routing.",
                 "platform": "Snapchat",
             }
@@ -86,26 +94,36 @@ class SnapchatDownloader(BaseDownloader):
             return {
                 "success": False,
                 "error": "Could not extract username from Snapchat URL. "
-                         "Expected: snapchat.com/add/<username>",
+                         "Expected: snapchat.com/add/<username> or snapchat.com/@<username>",
                 "platform": "Snapchat",
             }
 
+        # Derive fetch mode from URL path
+        url_lower = url.lower()
+        if "/highlight/" in url_lower or "/highlights/" in url_lower:
+            mode = "highlights"
+        else:
+            # /add/<user>, /@<user>, /stories/<user> — stories only
+            mode = "stories"
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, self.download_stories, username, url, job_id
+            None, self._download_stories, username, job_id, mode
         )
 
     # ------------------------------------------------------------------
     # Synchronous download logic
     # ------------------------------------------------------------------
 
-    def download_stories(
-        self, username: str, url: str, job_id: Optional[str] = None
+    def _download_stories(
+        self, username: str, job_id: Optional[str] = None, mode: str = "both"
     ) -> Dict:
-        """Fetch stories + highlights from Apify, download all media files.
+        """Scrape story.snapchat.com and download all media files.
 
-        Returns a dict with the same shape as before so the rest of the bot
-        (uploader, queue, Telegram handlers) needs zero changes.
+        Args:
+            mode: ``"stories"`` — active 24h story only;
+                  ``"highlights"`` — curated highlight albums only;
+                  ``"both"`` — everything (default).
         """
         self.rate_limiter.wait_if_needed()
 
@@ -115,45 +133,26 @@ class SnapchatDownloader(BaseDownloader):
         os.makedirs(job_output_path, exist_ok=True)
 
         try:
-            logging.info(f"📡 Fetching content for @{username} via Apify…")
-
-            stories_items = []
-            highlights_items = []
-
-            # 1. Active Stories (now defaults to /add/ as well)
-            if "/stories/" in url.lower() or "/story." in url.lower() or "story.snapchat.com" in url.lower() or "/add/" in url.lower():
-                logging.info(f"🔍 URL mapped to ACTIVE STORIES for @{username}")
-                stories_items = self._fetch_actor(_ACTOR_STORIES, username, "stories")
-
-            # 2. Saved Highlights (custom trigger)
-            elif "/highlight/" in url.lower():
-                logging.info(f"🔍 URL mapped to SAVED HIGHLIGHTS for @{username}")
-                highlights_items = self._fetch_actor(_ACTOR_HIGHLIGHTS, username, "highlights")
-
-            # 3. Fallback (Call Stories if format is unknown)
-            else:
-                logging.info(f"🔍 URL format ambiguous — defaulting to ACTIVE STORIES for @{username}")
-                stories_items = self._fetch_actor(_ACTOR_STORIES, username, "stories")
-
-            # Merge and deduplicate by mediaUrl
-            all_items = self._merge(stories_items, highlights_items)
+            logging.info(f"📡 Scraping story page for @{username} (mode={mode})…")
+            all_items = self._scrape_page(username, mode=mode)
 
             if not all_items:
+                mode_label = {
+                    "stories": "active stories",
+                    "highlights": "highlights",
+                    "both": "stories or highlights",
+                }.get(mode, "content")
                 return {
                     "success": False,
                     "platform": "Snapchat",
                     "username": username,
-                    "error": "No active stories or highlights found for this profile.",
+                    "error": f"No {mode_label} found for this profile.",
                     "files": [],
                 }
 
             count = len(all_items)
-            logging.info(
-                f"📸 Found {count} items for @{username} "
-                f"({len(stories_items)} stories, {len(highlights_items)} highlights)"
-            )
+            logging.info(f"📸 Found {count} snap(s) for @{username}")
 
-            # --- Download each media file --------------------------------
             downloaded_files: List[str] = []
             for i, item in enumerate(all_items, 1):
                 media_url  = item.get("mediaUrl")
@@ -206,17 +205,6 @@ class SnapchatDownloader(BaseDownloader):
                 "files": downloaded_files,
             }
 
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code
-            if status == 402:
-                msg = "Apify quota exhausted — please top up your Apify account."
-            elif status == 429:
-                msg = "Apify rate limit hit — please try again shortly."
-            else:
-                msg = f"HTTP {status}"
-            logging.error(f"❌ Apify HTTP error {status}: {e.response.text}")
-            return {"success": False, "error": msg, "details": e.response.text, "platform": "Snapchat"}
-
         except requests.exceptions.RequestException as e:
             logging.error(f"❌ Network error: {e}")
             return {"success": False, "error": "Network error", "details": str(e), "platform": "Snapchat"}
@@ -226,103 +214,92 @@ class SnapchatDownloader(BaseDownloader):
             return {"success": False, "error": "Unexpected error", "details": str(e), "platform": "Snapchat"}
 
     # ------------------------------------------------------------------
-    # Private helpers
+    # Scraping helpers
     # ------------------------------------------------------------------
 
-    def _fetch_actor(
-        self, actor_id: str, username: str, label: str
-    ) -> List[Dict]:
-        """Call one Apify actor synchronously and return normalised items.
+    def _scrape_page(self, username: str, mode: str = "both") -> List[Dict]:
+        """Fetch story.snapchat.com and return normalised snap items.
 
-        Returns an empty list (not an exception) on actor-level failures so
-        the other actor's results are still usable.
+        Args:
+            mode: ``"stories"`` — active story only;
+                  ``"highlights"`` — curated highlights only;
+                  ``"both"`` — everything (default).
         """
-        url = f"{_APIFY_BASE}/{actor_id}{_SYNC_SUFFIX}"
-        try:
-            resp = self.session.post(
-                url,
-                params={"token": self.apify_token},
-                json={"usernames": [username], "maxSnapsPerUser": 50},
-                timeout=120,
-            )
-            resp.raise_for_status()
-            raw: List[Dict] = resp.json()
-            normalised = self._normalise(raw)
-            logging.info(
-                f"  └── {label}: {len(normalised)} item(s) from {actor_id}"
-            )
-            return normalised
-        except requests.exceptions.HTTPError as e:
-            # 4xx from one actor shouldn't kill the whole request
-            logging.warning(
-                f"⚠️  {label} actor ({actor_id}) returned HTTP "
-                f"{e.response.status_code} — skipping."
-            )
-            return []
-        except Exception as e:
-            logging.warning(f"⚠️  {label} actor ({actor_id}) failed: {e} — skipping.")
+        url = _STORY_URL.format(username=username)
+        resp = self.session.get(url, timeout=30)
+        resp.raise_for_status()
+
+        match = _NEXT_DATA_RE.search(resp.text)
+        if not match:
+            logging.warning(f"⚠️  No __NEXT_DATA__ found for @{username}")
             return []
 
-    def _normalise(self, raw_items: List[Dict]) -> List[Dict]:
-        """Map any actor's output to a common schema.
+        try:
+            page_props = json.loads(match.group(1))["props"]["pageProps"]
+        except (json.JSONDecodeError, KeyError) as e:
+            logging.error(f"❌ Failed to parse page JSON for @{username}: {e}")
+            return []
+
+        snap_lists: List[List[Dict]] = []
+
+        # Active 24-h story
+        if mode in ("stories", "both"):
+            story = page_props.get("story") or {}
+            if story.get("snapList"):
+                snap_lists.append(story["snapList"])
+                logging.info(
+                    f"  └── active story: {len(story['snapList'])} snap(s)"
+                )
+
+        # Curated highlight albums
+        if mode in ("highlights", "both"):
+            highlights = page_props.get("curatedHighlights") or []
+            for h in highlights:
+                snaps = h.get("snapList") or []
+                if snaps:
+                    title = (h.get("storyTitle") or {}).get("value", "untitled")
+                    snap_lists.append(snaps)
+                    logging.info(f"  └── highlight '{title}': {len(snaps)} snap(s)")
+
+        # Flatten and normalise
+        all_snaps = [snap for sl in snap_lists for snap in sl]
+        return self._normalise_and_dedupe(all_snaps)
+
+    def _normalise_and_dedupe(self, raw_snaps: List[Dict]) -> List[Dict]:
+        """Map Snapchat's snap schema to the common internal schema.
 
         Common output schema:
-          mediaUrl  (str)  — direct download URL
+          mediaUrl  (str)  — direct CDN download URL
           mediaType (int)  — 0=image, 1=video
-          timestamp (str)  — ISO8601 or epoch string
+          timestamp (str)  — epoch seconds string
         """
+        seen: set = set()
         result: List[Dict] = []
-        
-        # Flatten nested 'snaps' arrays if present (igview-owner structure)
-        flat_items = []
-        for item in raw_items:
-            if "snaps" in item and isinstance(item["snaps"], list):
-                # Inherit top-level metadata if useful later, but mediaUrl is in the snap
-                flat_items.extend(item["snaps"])
-            else:
-                flat_items.append(item)
 
-        for item in flat_items:
-            media_url = (
-                item.get("mediaUrl")
-                or item.get("url")
-                or item.get("videoUrl")
-                or item.get("imageUrl")
-            )
-            if not media_url:
+        for snap in raw_snaps:
+            snap_urls = snap.get("snapUrls") or {}
+            media_url = snap_urls.get("mediaUrl")
+            if not media_url or media_url in seen:
                 continue
+            seen.add(media_url)
 
-            raw_type = item.get("mediaType") or item.get("type", "")
-            if isinstance(raw_type, int):
-                media_type = raw_type
-            elif "video" in str(raw_type).lower() or str(media_url).endswith(".mp4"):
-                media_type = 1
-            else:
-                media_type = 0
+            # snapMediaType: 0=image, 1=video
+            raw_type = snap.get("snapMediaType", 0)
+            media_type = 1 if raw_type == 1 else 0
 
-            timestamp = (
-                item.get("timestamp")
-                or item.get("postedAt")
-                or item.get("createdAt")
-                or item.get("capturedAt")
-                or str(int(time.time()))
-            )
+            # timestampInSec is a nested {value: "..."} object
+            ts_obj = snap.get("timestampInSec") or {}
+            timestamp = ts_obj.get("value") or str(int(time.time()))
 
             result.append(
                 {"mediaUrl": media_url, "mediaType": media_type, "timestamp": timestamp}
             )
+
         return result
 
-    def _merge(self, stories: List[Dict], highlights: List[Dict]) -> List[Dict]:
-        """Merge two item lists, deduplicating by mediaUrl."""
-        seen: set = set()
-        merged: List[Dict] = []
-        for item in stories + highlights:
-            url = item.get("mediaUrl", "")
-            if url and url not in seen:
-                seen.add(url)
-                merged.append(item)
-        return merged
+    # ------------------------------------------------------------------
+    # Media download helper (unchanged from previous version)
+    # ------------------------------------------------------------------
 
     def _download_media(
         self,
@@ -355,3 +332,14 @@ class SnapchatDownloader(BaseDownloader):
         except Exception as e:
             logging.error(f"❌ Failed to download media: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Backwards-compat alias (queue.py calls download_stories directly
+    # in some recovery code paths)
+    # ------------------------------------------------------------------
+
+    def download_stories(
+        self, username: str, url: str = "", job_id: Optional[str] = None
+    ) -> Dict:
+        """Synchronous alias kept for queue recovery compatibility."""
+        return self._download_stories(username, job_id, mode="both")

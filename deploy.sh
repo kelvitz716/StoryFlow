@@ -66,7 +66,6 @@ TELEGRAM_API_HASH=$(get_env_val "TELEGRAM_API_HASH")
 TELEGRAM_PHONE_NUMBER=$(get_env_val "TELEGRAM_PHONE_NUMBER")
 TELEGRAM_SESSION_STRING=$(get_env_val "TELEGRAM_SESSION_STRING")
 ADMIN_USER_ID=$(get_env_val "ADMIN_USER_ID")
-APIFY_TOKEN=$(get_env_val "APIFY_TOKEN")
 MODE=$(get_env_val "MODE")
 
 # 1. Prompt for configuration
@@ -77,7 +76,6 @@ prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH" 
 prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER" "mask"
 prompt_input "Enter Session String (optional, for production)" "TELEGRAM_SESSION_STRING" "$TELEGRAM_SESSION_STRING" "mask"
 prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357" "mask"
-prompt_input "Enter Apify Token (for Snapchat)" "APIFY_TOKEN" "$APIFY_TOKEN" "mask"
 prompt_input "Enter Mode (telegram/cli)" "MODE" "telegram"
 
 # 2. Write to .env
@@ -85,9 +83,6 @@ echo "📝 Updating .env file..."
 cat > .env <<EOF
 # Admin Configuration
 ADMIN_USER_ID=$ADMIN_USER_ID
-
-# Snapchat via Apify
-APIFY_TOKEN=$APIFY_TOKEN
 
 # Download Configuration
 DOWNLOAD_PATH=/app/downloads

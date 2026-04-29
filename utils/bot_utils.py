@@ -72,7 +72,7 @@ def format_error_message(error: str, platform: Optional[str] = None) -> str:
     """Format a user-friendly error message."""
     prefix = f"❌ *{platform} Error*" if platform else "❌ *Error*"
     
-    # Common error mapping
+    # Common error mapping (order matters — more specific checks first)
     error_lower = error.lower()
     if 'login' in error_lower or 'cookie' in error_lower or 'authentication' in error_lower:
         hint = "\n\n💡 *Hint:* This content may require login cookies. Try adding them in 'Manage Cookies'."
