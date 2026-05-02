@@ -3,6 +3,7 @@ import logging
 import random
 import os
 import tempfile
+import re
 from typing import Optional
 from telegram import Update, Document
 from telegram.ext import ContextTypes, Application
@@ -41,7 +42,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if update.channel_post is not None:
         return
 
-    url = update.effective_message.text.strip()
+    url_text = update.effective_message.text.strip()
     msg = update.effective_message
     
     # Clear any ghosted UI states when the user explicitly sends a new URL
@@ -68,44 +69,60 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             return
 
-    # Resolve any shortlinks first
-    url = await resolve_shortlink(url)
-
-    # Identify platform
-    platform = identify_platform(url)
-    if platform == "Unknown":
-        await update.effective_message.reply_text(
-            "🤔 Hmm, I don't recognize that link!\n"
-            "I support Snapchat, Instagram, TikTok, Twitter, and Facebook."
-        )
-        return
+    # Extract all URLs
+    urls = re.findall(r'https?://[^\s]+', url_text)
+    # Deduplicate while preserving order
+    urls = list(dict.fromkeys(urls))
     
-    # Process download
-    proc_msg = random.choice(PROCESSING_MSGS)
-    status_msg = await update.effective_message.reply_text(f"{proc_msg}")
-    
-    async def upload_func(files):
-        await batch_upload_media(update, files, status_msg, mtproto_client)
-
-    if download_queue:
-        job = await download_queue.submit(
-            user_id=user_id,
-            url=url,
-            platform=platform,
-            upload_func=upload_func,
-            chat_id=str(update.effective_chat.id),
-            message_id=msg.message_id
-        )
+    if not urls:
+        urls = [url_text]
         
-        if job:
-            register_job_message(job.job_id, status_msg)
-            pos = download_queue.get_queue_position(job.job_id)
-            if pos > 0:
-                 await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\nWaiting for worker...", parse_mode='Markdown')
+    if len(urls) > 10:
+        await msg.reply_text("⚠️ You can only queue up to 10 links at a time. Processing the first 10...")
+        urls = urls[:10]
+
+    for raw_url in urls:
+        # Resolve any shortlinks first
+        url = await resolve_shortlink(raw_url)
+
+        # Identify platform
+        platform = identify_platform(url)
+        if platform == "Unknown":
+            await msg.reply_text(
+                f"🤔 Hmm, I don't recognize this link:\n`{raw_url}`\n"
+                "I support Snapchat, Instagram, TikTok, Twitter, and Facebook.",
+                parse_mode='Markdown'
+            )
+            continue
+        
+        # Process download
+        proc_msg = random.choice(PROCESSING_MSGS)
+        status_msg = await msg.reply_text(f"{proc_msg}")
+        
+        def make_upload_func(sm):
+            async def upload_func(files):
+                await batch_upload_media(update, files, sm, mtproto_client)
+            return upload_func
+
+        if download_queue:
+            job = await download_queue.submit(
+                user_id=user_id,
+                url=url,
+                platform=platform,
+                upload_func=make_upload_func(status_msg),
+                chat_id=str(update.effective_chat.id),
+                message_id=msg.message_id
+            )
+            
+            if job:
+                register_job_message(job.job_id, status_msg)
+                pos = download_queue.get_queue_position(job.job_id)
+                if pos > 0:
+                     await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\\nWaiting for worker...", parse_mode='Markdown')
+            else:
+                await status_msg.edit_text("⚠️ *Queue Full*\\nPlease wait for your active downloads to finish.")
         else:
-            await status_msg.edit_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
-    else:
-        await status_msg.edit_text("⚠️ System Error: Queue not active.")
+            await status_msg.edit_text("⚠️ System Error: Queue not active.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
     user_id = str(update.effective_user.id)
