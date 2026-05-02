@@ -69,10 +69,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             return
 
-    # Extract all URLs
-    urls = re.findall(r'https?://[^\s]+', url_text)
-    # Deduplicate while preserving order
-    urls = list(dict.fromkeys(urls))
+    # Pre-process to handle comma-separated links without spaces
+    spaced_text = url_text.replace('http', ' http')
+    raw_urls = re.findall(r'https?://[^\s]+', spaced_text)
+    
+    # Strip trailing commas and deduplicate while preserving order
+    urls = []
+    for u in raw_urls:
+        clean_u = u.rstrip(',')
+        if clean_u not in urls:
+            urls.append(clean_u)
     
     if not urls:
         urls = [url_text]
