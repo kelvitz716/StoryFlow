@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 # Install system dependencies
 # ffmpeg: required for yt-dlp post-processing
@@ -6,6 +6,7 @@ FROM python:3.11-slim-bookworm
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -32,5 +33,5 @@ ENV PYTHONUNBUFFERED=1
 ENV DOWNLOAD_PATH=/app/downloads
 ENV COOKIE_PATH=/app/cookies
 
-# Run the application
-CMD ["python", "storyflow.py"]
+# Run the update entrypoint script
+ENTRYPOINT ["/bin/bash", "/app/entrypoint.sh"]

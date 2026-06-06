@@ -19,3 +19,12 @@ Future plans and improvements.
 
 ---
 *Created with a Second Brain philosophy for easy navigation in tools like Obsidian.*
+
+
+
+
+kelvitz@fedora:~$ immich-go upload \
+  --server http://100.68.227.114:3030 \
+  --api-key 6JeXTu6yX4qR0k8LqqdtGlJdwnG15l5WdVfILVMEc \
+  --google-photos ~/takeout
+

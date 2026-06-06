@@ -1,0 +1,23 @@
+services:
+  storyflow_app:
+    image: storyflow:latest
+    container_name: storyflow_app
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks:
+      - proxy_net
+    volumes:
+      # Map data folders to local directory
+      - ./downloads:/app/downloads
+      - ./cookies:/app/cookies
+      - ./sessions:/app/sessions
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+
+networks:
+  proxy_net:
+    external: true
