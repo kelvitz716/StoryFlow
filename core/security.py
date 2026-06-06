@@ -2,6 +2,8 @@
 
 import re
 import logging
+import socket
+import ipaddress
 from urllib.parse import urlparse, urlunparse
 
 def sanitize_filename(filename: str) -> str:
@@ -102,3 +104,37 @@ def mask_sensitive_url(url: str) -> str:
         
     except Exception:
         return "Checking URL..." # Fallback
+
+
+def is_safe_url(url: str) -> bool:
+    """
+    Check if the URL points to a public IP and doesn't expose internal/private subnets (SSRF protection).
+    
+    Args:
+        url: Input URL string
+        
+    Returns:
+        True if URL is safe and public, False otherwise
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+            
+        # Block literal localhost
+        if hostname.lower() in ('localhost', 'localhost.localdomain'):
+            return False
+            
+        # Resolve hostname to IP addresses
+        addrinfo = socket.getaddrinfo(hostname, None)
+        for family, _, _, _, sockaddr in addrinfo:
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+    except Exception:
+        # If lookup fails, return False to be safe (invalid host, or local address)
+        return False
+

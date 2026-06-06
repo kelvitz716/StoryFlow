@@ -85,7 +85,7 @@ class GalleryDLDownloader(BaseDownloader):
                 return result
                 
             # Try yt-dlp as fallback for supported platforms
-            fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram"]
+            fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram", "Generic"]
             if platform in fallback_platforms:
                 logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
                 fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback)

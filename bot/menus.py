@@ -27,7 +27,7 @@ async def send_main_menu(target, user_id: str, access_manager: Optional[AccessMa
         "🎬 *StoryFlow Downloader*\n\n"
         "I securely download stories, reels, and videos from:\n"
         "👻 Snapchat • 📸 Instagram • 🎵 TikTok\n"
-        "🐦 Twitter/X • 📘 Facebook\n\n"
+        "🐦 Twitter/X • 📘 Facebook • 🌐 any other link!\n\n"
         "👇 *Tap a button to get started!*"
     )
     keyboard = get_main_menu_keyboard(user_id, access_manager)

@@ -33,15 +33,46 @@ def pop_job_message(job_id: str):
 
 import asyncio
 import requests
+from core.security import validate_domain
 
 async def resolve_shortlink(url: str) -> str:
-    """Resolve known URL shorteners using requests asynchronously."""
-    shortener_domains = ['ift.tt', 'bit.ly', 't.co', 'tinyurl.com', 'dl.snapchat.com']
-    if any(domain in url.lower() for domain in shortener_domains):
+    """Resolve any URL shorteners or redirects asynchronously, skipping primary domains."""
+    # Primary domains that do NOT need redirect resolution
+    # Note: we exclude short domains like vm.tiktok.com, fb.watch, and dl.snapchat.com so they get resolved.
+    primary_domains = ['snapchat.com', 'instagram.com', 'tiktok.com', 'twitter.com', 'x.com', 'facebook.com']
+    exclude_shorteners = ['dl.snapchat.com', 'vm.tiktok.com', 'fb.watch']
+    
+    is_primary = validate_domain(url, primary_domains) and not validate_domain(url, exclude_shorteners)
+    
+    if not is_primary:
         try:
-            # Run the synchronous requests call in a separate thread to avoid blocking the event loop
-            response = await asyncio.to_thread(requests.head, url, allow_redirects=True, timeout=5)
-            return str(response.url)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            }
+            
+            def do_resolve():
+                try:
+                    response = requests.head(url, headers=headers, allow_redirects=True, timeout=5)
+                    # If HEAD is not allowed (405 or 403), try a streamed GET
+                    if response.status_code in [403, 405]:
+                        response = requests.get(url, headers=headers, allow_redirects=True, stream=True, timeout=5)
+                        response.close() # Close stream immediately
+                    return str(response.url)
+                except Exception:
+                    # Fallback to GET directly on any other issue
+                    try:
+                        response = requests.get(url, headers=headers, allow_redirects=True, stream=True, timeout=5)
+                        response.close()
+                        return str(response.url)
+                    except Exception:
+                        return url
+
+            resolved_url = await asyncio.to_thread(do_resolve)
+            return resolved_url
         except Exception as e:
             logging.error(f"Failed to resolve shortlink {url}: {e}")
     return url

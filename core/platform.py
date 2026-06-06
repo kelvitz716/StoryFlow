@@ -2,7 +2,7 @@ import re
 import logging
 from urllib.parse import urlparse
 from typing import Tuple, Optional
-from core.security import validate_domain
+from core.security import validate_domain, is_safe_url
 
 
 def identify_platform(url: str) -> str:
@@ -15,6 +15,7 @@ def identify_platform(url: str) -> str:
         - "TikTok": For tiktok.com or vm.tiktok.com URLs
         - "Twitter": For twitter.com or x.com URLs
         - "Facebook": For facebook.com or fb.watch URLs
+        - "Generic": For other HTTP/HTTPS URLs
         - "Unknown": For unsupported platforms
     """
     if validate_domain(url, ['snapchat.com']):
@@ -27,6 +28,8 @@ def identify_platform(url: str) -> str:
         return "Twitter"
     elif validate_domain(url, ['facebook.com', 'fb.watch']):
         return "Facebook"
+    elif url.startswith(('http://', 'https://')) and is_safe_url(url):
+        return "Generic"
     else:
         return "Unknown"
 

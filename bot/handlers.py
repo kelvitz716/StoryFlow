@@ -69,20 +69,51 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             return
 
-    # Pre-process to handle comma-separated links without spaces
+    # ── URL extraction ────────────────────────────────────────────────────
+    # Handle all cases: bare URLs, URLs embedded in text, comma/space/newline
+    # separated lists, and URLs forwarded with trailing punctuation.
+    #
+    # Step 1: insert a space before every "http" so comma-joined URLs are split
     spaced_text = url_text.replace('http', ' http')
+    # Step 2: extract everything that looks like a URL
     raw_urls = re.findall(r'https?://[^\s]+', spaced_text)
-    
-    # Strip trailing commas and deduplicate while preserving order
+
+    def _clean_url(u: str) -> str:
+        """
+        Strip trailing punctuation from a URL, but preserve bracket characters
+        that are balanced within the URL (e.g. Wikipedia-style /wiki/A_(film)).
+
+        Rules:
+          - Always strip trailing: . , ! ? ; : \' \" > ‼ … › «
+          - Strip trailing ) only if '(' count < ')' count in URL (unbalanced)
+          - Strip trailing ] only if '[' count < ']' count in URL (unbalanced)
+        """
+        # Always-strip set (cannot appear as valid URL-tail in practice)
+        _ALWAYS = set('.,!?;:\'"›«>‼…')
+        while u:
+            ch = u[-1]
+            if ch in _ALWAYS:
+                u = u[:-1]
+            elif ch == ')' and u.count('(') < u.count(')'):
+                u = u[:-1]
+            elif ch == ']' and u.count('[') < u.count(']'):
+                u = u[:-1]
+            else:
+                break
+        return u
+
+    # Step 3: clean and deduplicate
     urls = []
     for u in raw_urls:
-        clean_u = u.rstrip(',')
-        if clean_u not in urls:
+        clean_u = _clean_url(u)
+        if clean_u and clean_u not in urls:
             urls.append(clean_u)
-    
+
     if not urls:
-        urls = [url_text]
-        
+        # No URLs found at all — message passed the filter but has no extractable URL
+        # (e.g. plain text admin input). Don't process it.
+        return
+
     if len(urls) > 10:
         await msg.reply_text("⚠️ You can only queue up to 10 links at a time. Processing the first 10...")
         urls = urls[:10]
@@ -95,8 +126,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         platform = identify_platform(url)
         if platform == "Unknown":
             await msg.reply_text(
-                f"🤔 Hmm, I don't recognize this link:\n`{raw_url}`\n"
-                "I support Snapchat, Instagram, TikTok, Twitter, and Facebook.",
+                f"❌ *Invalid Link*\n\n`{raw_url}`\n"
+                "Please enter a valid, public HTTP or HTTPS link.",
                 parse_mode='Markdown'
             )
             continue

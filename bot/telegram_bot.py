@@ -320,8 +320,9 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     app.add_handler(MessageHandler(filters.Document.ALL, lambda u, c: handle_document(u, c, cookie_manager)))
     
     # URL Handler (group 1 so admin handler gets first crack at group 0)
+    # Matches any message containing an http/https URL (not just messages starting with one)
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^https?://'),
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r'https?://'),
         lambda u, c: handle_url(u, c, access_manager, download_queue, mtproto_client)
     ), group=1)
     
