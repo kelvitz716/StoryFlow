@@ -15,21 +15,24 @@ class AccessManager:
     ANONYMOUS_IDS: set = {"1087968824"}
 
     def __init__(self, admin_id: str):
-        self.admin_id = str(admin_id)
-        # Ensure admin is always in the database for tracking purposes
+        # Support comma-separated admin IDs
+        self.admin_ids = [aid.strip() for aid in str(admin_id).split(",") if aid.strip()]
+        self.admin_id = self.admin_ids[0] if self.admin_ids else ""
+        # Ensure admins are always in the database for tracking purposes
         self._ensure_admin()
 
     def _ensure_admin(self):
-        """Make sure the admin ID is recorded so we can track their chat_id."""
+        """Make sure all admin IDs are recorded so we can track their chat_id."""
         try:
             with db.get_conn() as conn:
-                conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (self.admin_id,))
+                for aid in self.admin_ids:
+                    conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (aid,))
         except Exception as e:
-            logging.error(f"Failed to ensure admin in DB: {e}")
+            logging.error(f"Failed to ensure admins in DB: {e}")
 
     def is_admin(self, user_id: str) -> bool:
-        """Check if a user is the admin."""
-        return str(user_id) == self.admin_id
+        """Check if a user is an admin."""
+        return str(user_id) in self.admin_ids
 
     def is_system_sender(self, user_id: str) -> bool:
         """Return True for Telegram-internal senders that should be silently ignored."""
@@ -42,7 +45,7 @@ class AccessManager:
     def is_allowed(self, user_id: str) -> bool:
         """Check if a user is allowed to use the bot."""
         uid = str(user_id)
-        if uid == self.admin_id:
+        if uid in self.admin_ids:
             return True
         try:
             with db.get_conn() as conn:
