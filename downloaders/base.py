@@ -207,16 +207,25 @@ class BaseDownloader:
                         pass
 
                 logging.warning(f"⚠️ Attempt {attempt}/{max_attempts} failed for {process_name}: {error_msg}")
-                if stderr_text:
-                    logging.debug(f"STDERR ({process_name}): {stderr_text}")
-
-                # Check if it's an authentication error
-                if 'login' in stderr_text.lower() or 'authentication' in stderr_text.lower():
+                # Check if it's an authentication / login required error
+                # Note: gallery-dl exit code 4 is HttpError (401 Unauthorized / 403 Forbidden / Login redirect)
+                is_auth_error = (
+                    returncode == 4
+                    or 'login' in stderr_text.lower()
+                    or 'authentication' in stderr_text.lower()
+                    or 'cookie' in stderr_text.lower()
+                    or 'sign in' in stderr_text.lower()
+                    or 'unauthorized' in stderr_text.lower()
+                    or 'forbidden' in stderr_text.lower()
+                    or 'redirect' in stderr_text.lower()
+                )
+                if is_auth_error:
                     return {
                         'success': False,
-                        'error': 'Authentication required',
-                        'details': 'Please provide cookies for this platform',
-                        'platform': process_name
+                        'error': f'Login required for {process_name}. Please upload cookies via /start -> Manage Cookies',
+                        'details': 'Login cookies are required to download content from this platform',
+                        'platform': process_name,
+                        'returncode': returncode
                     }
 
                 # Check for 404 or content not found
@@ -237,16 +246,6 @@ class BaseDownloader:
                         'details': 'This video may require login, be private, or from an unsupported format',
                         'platform': process_name,
                         'returncode': 64
-                    }
-
-                # Exit code 4 = No Downloads / Nothing found
-                if returncode == 4:
-                    return {
-                        'success': False,
-                        'error': 'No active stories/spotlights found',
-                        'details': 'The user has no content available or it is private',
-                        'platform': process_name,
-                        'returncode': 4
                     }
 
                 # Retry on network errors
