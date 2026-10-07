@@ -131,6 +131,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             continue
 
+        # Proactive check: TikTok LIVE streams are live broadcasts (not static videos)
+        if "tiktok.com" in url.lower() and ("/live" in url.lower() or "live.tiktok.com" in url.lower()):
+            await msg.reply_text(
+                "🔴 *TikTok Live Stream*\n\n"
+                "Live broadcasts cannot be downloaded as static videos. "
+                "Please share a link to a published TikTok video or reel.",
+                parse_mode='Markdown'
+            )
+            continue
+
         # Identify platform
         platform = identify_platform(url)
         if platform == "Unknown":
@@ -140,10 +150,19 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 parse_mode='Markdown'
             )
             continue
+
+        # Proactive cookie tip if Instagram/Facebook without cookies
+        cookie_warning = ""
+        if platform in ("Instagram", "Facebook"):
+            if cookie_manager and not cookie_manager.has_cookie(platform, user_id):
+                cookie_warning = f"\n\n💡 *Tip:* No {platform} cookies saved. If this is a private post/story, upload `cookies.txt` via `/start` -> *🍪 Manage Cookies*."
         
         # Process download
-        proc_msg = random.choice(PROCESSING_MSGS)
-        status_msg = await msg.reply_text(f"{proc_msg}")
+        emoji = get_platform_emoji(platform)
+        status_msg = await msg.reply_text(
+            f"{emoji} *{platform} Download*\n🔍 *Status:* Analyzing link...",
+            parse_mode='Markdown'
+        )
         
         def make_upload_func(sm):
             async def upload_func(files):
@@ -163,15 +182,19 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             if job:
                 register_job_message(job.job_id, status_msg)
                 pos = download_queue.get_queue_position(job.job_id)
-                if pos > 0:
-                    try:
-                        await status_msg.edit_text(
-                            f"⏳ *Queued* (Position: {pos})\nWaiting for worker...",
-                            parse_mode='Markdown',
-                            reply_markup=get_cancel_keyboard(job.job_id)
-                        )
-                    except Exception as e:
-                        logging.debug(f"Status message edit skipped: {e}")
+                try:
+                    queued_text = (
+                        f"{emoji} *{platform} Download*\n"
+                        f"⏳ *Status:* Queued (Position {pos})\n"
+                        f"🕒 *Waiting for worker...*{cookie_warning}"
+                    )
+                    await status_msg.edit_text(
+                        queued_text,
+                        parse_mode='Markdown',
+                        reply_markup=get_cancel_keyboard(job.job_id)
+                    )
+                except Exception as e:
+                    logging.debug(f"Status message edit skipped: {e}")
             else:
                 try:
                     await status_msg.edit_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")

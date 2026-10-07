@@ -67,19 +67,47 @@ async def update_job_status(application: Application, job: DownloadJob):
         
         if job.status == JobStatus.QUEUED:
             pos = get_queue().get_queue_position(job.job_id)
+            keyboard = get_cancel_keyboard(job.job_id)
             await status_msg.edit_text(
-                f"⏳ *Queued* (Position: {pos})\nWaiting for available worker...", 
-                parse_mode='Markdown'
+                f"{emoji} *{job.platform} Download*\n"
+                f"⏳ *Status:* Queued (Position {pos})\n"
+                f"🕒 *Waiting for worker...*",
+                parse_mode='Markdown',
+                reply_markup=keyboard
             )
             
         elif job.status == JobStatus.DOWNLOADING:
-            # Escape the message for safe Markdown rendering
-            msg = escape_markdown(job.message, version=1)
-            await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} {msg}", parse_mode='Markdown')
+            msg = job.message or ""
+            # Format percentage into progress bar if present
+            if "%" in msg:
+                import re
+                pct_match = re.search(r'(\d+(?:\.\d+)?%)', msg)
+                if pct_match:
+                    pct_str = pct_match.group(1)
+                    try:
+                        val = float(pct_str.replace('%', ''))
+                        filled = int(round(val / 10))
+                        bar = '█' * filled + '░' * (10 - filled)
+                        msg = f"Progress: `{bar}` {val:.0f}%"
+                    except Exception:
+                        pass
+            elif "Fetching media files..." not in msg and ("Downloading:" in msg or ".mp4" in msg or ".jpg" in msg):
+                msg = "Fetching media files..."
+
+            safe_msg = escape_markdown(msg, version=1) if msg else "Fetching media..."
+            await status_msg.edit_text(
+                f"{emoji} *{job.platform} Download*\n"
+                f"⬇️ *Status:* Downloading...\n"
+                f"⚡ {safe_msg}",
+                parse_mode='Markdown'
+            )
             
         elif job.status == JobStatus.UPLOADING:
-            # Batch upload handles its own status updates
-            pass
+            await status_msg.edit_text(
+                f"{emoji} *{job.platform} Download*\n"
+                f"🚀 *Status:* Uploading to Telegram...",
+                parse_mode='Markdown'
+            )
             
         elif job.status == JobStatus.COMPLETED:
             stats_manager.increment_download(job.user_id, job.platform)
@@ -91,7 +119,7 @@ async def update_job_status(application: Application, job: DownloadJob):
             pop_job_message(job.job_id)
 
         elif job.status == JobStatus.CANCELLED:
-            await status_msg.edit_text("\u274c Job cancelled.", parse_mode='Markdown')
+            await status_msg.edit_text("❌ *Job Cancelled*", parse_mode='Markdown')
             pop_job_message(job.job_id)
                 
     except Exception as e:

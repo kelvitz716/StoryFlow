@@ -150,11 +150,11 @@ class BaseDownloader:
                                         except Exception:
                                             pass
 
-                                    # gallery-dl style (usually just filenames)
+                                    # gallery-dl style (usually file paths)
                                     elif line_text.startswith('#'):
                                         pass
                                     elif "." in line_text and "/" in line_text:
-                                        progress_callback(f"Downloading: {os.path.basename(line_text)}")
+                                        progress_callback("Fetching media files...")
 
                         # Wait for process to finish, then collect stderr
                         await process.wait()
