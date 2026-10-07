@@ -223,9 +223,9 @@ class TestPurgeConfirmNoNameError:
 
     def test_httpx_logger_silenced(self):
         """httpx and httpcore loggers must be at WARNING level after run_telegram_bot setup."""
-        import logging
+        import logging as _log
         # Simulate what run_telegram_bot does
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
-        assert logging.getLogger("httpx").level == logging.WARNING
-        assert logging.getLogger("httpcore").level == logging.WARNING
+        _log.getLogger("httpx").setLevel(_log.WARNING)
+        _log.getLogger("httpcore").setLevel(_log.WARNING)
+        assert _log.getLogger("httpx").level == _log.WARNING
+        assert _log.getLogger("httpcore").level == _log.WARNING

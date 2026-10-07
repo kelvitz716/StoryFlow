@@ -10,8 +10,7 @@ import tempfile
 import pytest
 from unittest.mock import patch
 
-from auth.cookies import CookieManager
-from downloaders import gallery_dl as gdl_module
+import downloaders.gallery_dl as gdl_module  # noqa: F401 — keep for reload tests
 
 
 def _sanitize(name: str) -> str:
@@ -32,7 +31,6 @@ class TestCookieFileNamingConsistency:
         platform = "instagram"
         with tempfile.TemporaryDirectory() as cookie_dir:
             # CookieManager path
-            cm = CookieManager(cookie_path=cookie_dir)
             cm_path = os.path.join(
                 cookie_dir,
                 f"{_sanitize(platform)}_{_sanitize(user_id)}.txt"
