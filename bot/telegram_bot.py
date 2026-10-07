@@ -340,10 +340,11 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     app.bot_data['download_path'] = download_path
     
     # Handlers
+    from functools import partial
     from bot.handlers import queue_command, handle_admin_input
-    app.add_handler(CommandHandler("start", lambda u, c: start(u, c, access_manager)))
-    app.add_handler(CommandHandler("help", lambda u, c: help_command(u, c, access_manager)))
-    app.add_handler(CommandHandler("queue", lambda u, c: queue_command(u, c, access_manager, download_queue)))
+    app.add_handler(CommandHandler("start", partial(start, access_manager=access_manager)))
+    app.add_handler(CommandHandler("help", partial(help_command, access_manager=access_manager)))
+    app.add_handler(CommandHandler("queue", partial(queue_command, access_manager=access_manager, download_queue=download_queue)))
     
     # Callback Query
     app.add_handler(CallbackQueryHandler(button_callback))
@@ -355,17 +356,17 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     # Runs in group 0 before the URL handler so bare IDs/numbers are handled correctly.
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
-        lambda u, c: handle_admin_input(u, c, access_manager)
+        partial(handle_admin_input, access_manager=access_manager)
     ), group=0)
 
     # Document handler for cookie uploads
-    app.add_handler(MessageHandler(filters.Document.ALL, lambda u, c: handle_document(u, c, cookie_manager, access_manager)))
+    app.add_handler(MessageHandler(filters.Document.ALL, partial(handle_document, cookie_manager=cookie_manager, access_manager=access_manager)))
     
     # URL Handler (group 1 so admin handler gets first crack at group 0)
     # Matches any message containing an http/https URL (not just messages starting with one)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'https?://'),
-        lambda u, c: handle_url(u, c, access_manager, download_queue, mtproto_client)
+        partial(handle_url, access_manager=access_manager, download_queue=download_queue, mtproto_client=mtproto_client)
     ), group=1)
     
     logging.info("🤖 StoryFlow Bot started!")
