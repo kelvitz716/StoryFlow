@@ -42,7 +42,10 @@ pip install TgCrypto && echo "  TgCrypto installed OK." \
 # ── 4. runit service ────────────────────────────────────────────────────────
 echo "[4/4] Installing runit service files..."
 
-SV_DIR="$HOME/.config/sv/storyflow"
+# Termux's sv-enable reads from $SVDIR (defaults to ~/.config/runit/sv).
+# Fall back to the env var if set, otherwise use the Termux default.
+RUNIT_SV_DIR="${SVDIR:-$HOME/.config/runit/sv}"
+SV_DIR="$RUNIT_SV_DIR/storyflow"
 mkdir -p "$SV_DIR/log"
 mkdir -p "$HOME/logs/storyflow"
 
@@ -67,3 +70,4 @@ echo "  3. Check logs:"
 echo "       tail -f $HOME/logs/storyflow/current"
 echo ""
 echo "  4. See termux/README.md for battery optimisation and wake-lock info."
+echo "  Service installed to: $SV_DIR"
