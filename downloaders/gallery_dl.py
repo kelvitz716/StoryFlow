@@ -1,4 +1,4 @@
-"""Gallery-dl wrapper for Instagram, TikTok, Twitter, and Facebook downloads."""
+"""Gallery-dl / yt-dlp wrapper covering 300+ gallery-dl sites and major video platforms."""
 
 import os
 import re
@@ -16,6 +16,7 @@ _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false')
 
 
 from downloaders.base import BaseDownloader
+from core.platform import YTDLP_DIRECT_PLATFORMS
 
 class GalleryDLDownloader(BaseDownloader):
     """Handler for general media downloads using gallery-dl."""
@@ -52,59 +53,68 @@ class GalleryDLDownloader(BaseDownloader):
             job_output_path = os.path.join(self.output_path, job_id) if job_id else self.output_path
             os.makedirs(job_output_path, exist_ok=True)
 
-            # Get list of files before download (only in this job's folder)
+            # Snapshot files before any download attempt
             files_before = self._get_download_files(job_output_path)
-            
+
+            # ── yt-dlp-primary platforms (YouTube, Vimeo, Twitch, SoundCloud, etc.) ──
+            # gallery-dl has no extractor for these; go straight to yt-dlp.
+            if platform in YTDLP_DIRECT_PLATFORMS:
+                logging.info(f"▶️  {platform} is a video-primary platform — routing directly to yt-dlp")
+                result = await self._download_with_ytdlp(
+                    url, platform, user_id, job_output_path, files_before,
+                    progress_callback=progress_callback
+                )
+                return result or {'success': False, 'error': 'yt-dlp returned no result', 'platform': platform}
+
+            # ── gallery-dl attempt ───────────────────────────────────────────────────
             command = self._build_command(url, platform, user_id, job_output_path)
-            
+
             logging.info(f"📥 Downloading {platform} content via gallery-dl...")
             logging.debug(f"Command: {' '.join(command)}")
-            
-            # Execute gallery-dl with retry logic (Async)
+
             result = await self._execute_with_retry(command, progress_callback=progress_callback)
-            
-            # Find new files after gallery-dl attempt
+
             files_after = self._get_download_files(job_output_path)
             new_files = [f for f in files_after if f not in files_before]
-            
+
             if result['success']:
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded successfully! ({len(new_files)} files)")
                     result['files'] = new_files
                     return result
-                
-                # Check for cached files (if any were already in the folder)
-                # Since we use a unique folder, any file here belongs to this job.
+
+                # Any file in the isolated job dir belongs to this job
                 if files_after:
                     logging.info(f"📂 Found {len(files_after)} files in the job directory")
                     result['files'] = list(files_after)
                     return result
-                
+
                 logging.warning(f"⚠️ No files found after gallery-dl success in folder: {job_output_path}")
-            
-            # Check for partial success (files downloaded despite error)
+
+            # Partial success: files arrived despite non-zero exit
             if new_files:
-                # TikTok specific: Images often download fine but audio fails. Treat this as success/feature.
-                logging.info(f"✅ {platform} images downloaded successfully (despite stderr)")
+                logging.info(f"✅ {platform} files downloaded (despite stderr)")
                 result['success'] = True
                 result['files'] = new_files
                 result['message'] = "Downloads completed (with some errors)"
                 return result
-                
-            # Try yt-dlp as fallback for supported platforms
-            fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram", "Generic"]
-            if platform in fallback_platforms:
-                logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback)
+
+            # ── yt-dlp fallback — all non-Snapchat platforms ─────────────────────────
+            # Snapchat has its own dedicated downloader; skip yt-dlp fallback for it.
+            if platform != 'Snapchat':
+                logging.info(f"🔄 gallery-dl failed for {platform} — trying yt-dlp fallback...")
+                fallback_result = await self._download_with_ytdlp(
+                    url, platform, user_id, job_output_path, files_before,
+                    progress_callback=progress_callback
+                )
                 if fallback_result and fallback_result['success']:
                     return fallback_result
                 elif fallback_result:
-                    # Return fallback error if we tried it
-                    logging.warning(f"⚠️ Fallback failed: {fallback_result.get('error')}")
+                    logging.warning(f"⚠️ yt-dlp fallback also failed: {fallback_result.get('error')}")
                     return fallback_result
-            
-            logging.error(f"❌ Download failed: {result.get('error') if result else 'Unknown error'}")
-            return result or {'success': False, 'error': 'Unknown failure', 'platform': platform}
+
+            logging.error(f"❌ Download failed for {platform}: {result.get('error') if result else 'Unknown error'}")
+            return result or {'success': False, 'error': 'Download failed', 'platform': platform}
 
                 
         except Exception as e:
