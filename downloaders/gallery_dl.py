@@ -10,6 +10,10 @@ from typing import Dict, Optional, Callable
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '500'))
 
+# Admin cookie fallback is opt-in (item 8).
+# Default is disabled to prevent inadvertently sharing admin credentials.
+_ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false').lower() == 'true'
+
 
 from downloaders.base import BaseDownloader
 
@@ -234,20 +238,29 @@ class GalleryDLDownloader(BaseDownloader):
         """
         Get the best available cookie file:
         1. Specific user cookies
-        2. Admin fallback cookies
+        2. Admin fallback cookies (only when ALLOW_ADMIN_COOKIE_FALLBACK=true)
         3. Legacy default cookies
+
+        Cookie filenames use the same sanitisation as CookieManager to guarantee
+        the two code paths resolve identical file paths for any user_id.
         """
-        platform_lower = platform.lower()
-        
+        platform_lower = re.sub(r'[^\w\-]', '', platform.lower()) or 'unknown'
+
+        def _sanitize_id(uid: str) -> str:
+            """Mirror CookieManager._sanitize_name exactly."""
+            return re.sub(r'[^\w\-]', '', uid) or 'unknown'
+
         # 1. Specific User Cookies
         if user_id:
-            user_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{user_id}.txt")
+            s_uid = _sanitize_id(user_id)
+            user_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_uid}.txt")
             if os.path.exists(user_cookie):
                 return user_cookie
-        
-        # 2. Admin Fallback
-        if self.admin_id and self.admin_id != user_id:
-            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{self.admin_id}.txt")
+
+        # 2. Admin Fallback — only when explicitly opted in
+        if _ALLOW_ADMIN_COOKIE_FALLBACK and self.admin_id and self.admin_id != user_id:
+            s_admin = _sanitize_id(self.admin_id)
+            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
             if os.path.exists(admin_cookie):
                 logging.info(f"💡 using Admin cookies for {platform} (Fallback)")
                 return admin_cookie
@@ -256,5 +269,5 @@ class GalleryDLDownloader(BaseDownloader):
         default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
         if os.path.exists(default_cookie):
             return default_cookie
-            
+
         return None
