@@ -16,10 +16,10 @@ from auth.access import AccessManager
 
 async def require_allowed(update: Update, access_manager: AccessManager) -> bool:
     """
-    Check whether the sender of this update is allowed to use the bot.
+    Check whether the sender/chat of this update is allowed to use the bot.
 
     Behaviour:
-    - Allowed users (including admins): returns True, caller proceeds normally.
+    - Allowed users/channels/groups: returns True, caller proceeds normally.
     - Disallowed users in a private chat: sends a short rejection message,
       returns False.
     - Disallowed users in a group/channel: silently ignores (returns False
@@ -30,22 +30,37 @@ async def require_allowed(update: Update, access_manager: AccessManager) -> bool
         access_manager: AccessManager instance.
 
     Returns:
-        True if the user is allowed, False otherwise.
+        True if the user/chat is allowed, False otherwise.
     """
-    if update.effective_user is None:
-        return False
+    msg = update.effective_message
 
-    user_id = str(update.effective_user.id)
+    # Collect all possible candidate IDs for access authorization
+    candidate_ids = []
 
-    if access_manager.is_allowed(user_id) or access_manager.is_admin(user_id):
-        return True
+    if msg and msg.is_automatic_forward and msg.sender_chat:
+        candidate_ids.append(str(msg.sender_chat.id))
+
+    if update.effective_user:
+        raw_uid = str(update.effective_user.id)
+        if not access_manager.is_system_sender(raw_uid):
+            candidate_ids.append(raw_uid)
+
+    if update.effective_chat:
+        candidate_ids.append(str(update.effective_chat.id))
+
+    if msg and msg.sender_chat:
+        candidate_ids.append(str(msg.sender_chat.id))
+
+    for uid in candidate_ids:
+        if access_manager.is_allowed(uid) or access_manager.is_admin(uid):
+            return True
 
     # Determine chat type for the rejection strategy
     chat = update.effective_chat
     is_private = chat is not None and chat.type == "private"
 
-    if is_private:
-        msg = update.effective_message
+    if is_private and update.effective_user:
+        user_id = str(update.effective_user.id)
         if msg:
             try:
                 await msg.reply_text(
@@ -55,6 +70,6 @@ async def require_allowed(update: Update, access_manager: AccessManager) -> bool
                 )
             except Exception as exc:
                 logging.debug(f"require_allowed: could not send rejection: {exc}")
-    # Groups: silent ignore — no reply to avoid spam
+    # Groups/Channels: silent ignore — no reply to avoid spam
 
     return False
