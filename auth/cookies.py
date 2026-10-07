@@ -214,6 +214,10 @@ class CookieManager:
             f"{s_platform}_{s_user_id}.txt"
         )
         return cookie_file if os.path.exists(cookie_file) else None
+
+    def has_cookie(self, platform: str, user_id: str) -> bool:
+        """Check if a valid cookie file exists for user and platform."""
+        return self.get_cookie_file(user_id, platform) is not None
     
     def delete_cookie_file(self, user_id: str, platform: str) -> bool:
         """
