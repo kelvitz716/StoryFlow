@@ -7,6 +7,9 @@ import asyncio
 import logging
 from typing import Dict, Optional, Callable
 
+# Max file size limit from env (applied to both gallery-dl and yt-dlp)
+_MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '500'))
+
 
 from downloaders.base import BaseDownloader
 
@@ -129,9 +132,11 @@ class GalleryDLDownloader(BaseDownloader):
             output_template = os.path.join(output_path, '%(id)s.%(ext)s')
             command = [
                 'yt-dlp',
+                '--no-config',
                 '-o', output_template,
                 '--no-warnings',
                 '--no-playlist',
+                f'--max-filesize', f'{_MAX_FILE_SIZE_MB}m',
             ]
             
             # Add cookies if available
@@ -139,8 +144,9 @@ class GalleryDLDownloader(BaseDownloader):
             if cookie_file:
                 logging.info(f"🍪 Using {platform} cookies with yt-dlp: {os.path.basename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
-            
-            command.append(url)
+
+            # URL must come after '--' to prevent argument injection
+            command.extend(['--', url])
             
             # Run yt-dlp asynchronously using the shared execution method
             # This handles streaming output and progress parsing
@@ -175,7 +181,7 @@ class GalleryDLDownloader(BaseDownloader):
             else:
                  return {
                     'success': False,
-                    'error': result.get('stderr', 'yt-dlp download failed'),
+                    'error': 'Download failed',
                     'platform': platform
                 }
                 
@@ -206,6 +212,7 @@ class GalleryDLDownloader(BaseDownloader):
             'gallery-dl',
             '-d', output_path,
             '--no-mtime',  # Don't set file modification time
+            f'--filesize-max={_MAX_FILE_SIZE_MB}m',
         ]
         
         # Add cookie support
@@ -218,8 +225,8 @@ class GalleryDLDownloader(BaseDownloader):
             if platform in ["Instagram", "Facebook", "TikTok"]:
                 logging.debug(f"⚠️ No cookies found for {platform}")
 
-        # Add URL as final argument
-        command.append(url)
+        # URL must come after '--' to prevent argument injection
+        command.extend(['--', url])
         
         return command
 
