@@ -17,6 +17,54 @@ from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 
 
+def _validate_admin_ids(raw: str) -> list[str]:
+    """
+    Parse and validate ADMIN_USER_ID.  Accepts a comma-separated list of
+    numeric Telegram IDs (positive or negative integers).
+    Calls sys.exit(1) with a clear message if any entry is non-numeric.
+    """
+    entries = [e.strip() for e in raw.split(',') if e.strip()]
+    for entry in entries:
+        if not entry.lstrip('-').isdigit():
+            print(
+                f"\u274c FATAL: ADMIN_USER_ID contains non-numeric entry: {entry!r}\n"
+                "  Expected a comma-separated list of Telegram user IDs (e.g. 123456789 or -1001234567890).",
+                file=sys.stderr
+            )
+            sys.exit(1)
+    return entries
+
+
+def _startup_permissions():
+    """
+    Apply restrictive file permissions at startup (item 9).
+    chmod 600 on .env and cookie files; chmod 700 on data directories.
+    All errors are logged as warnings and ignored.
+    """
+    import glob
+    import stat
+
+    def _chmod(path: str, mode: int):
+        try:
+            os.chmod(path, mode)
+        except Exception as exc:
+            logging.warning(f"startup permissions: could not chmod {path!r}: {exc}")
+
+    # Restrict .env
+    if os.path.exists('.env'):
+        _chmod('.env', stat.S_IRUSR | stat.S_IWUSR)  # 600
+
+    # Restrict cookie files
+    cookie_path = os.getenv('COOKIE_PATH', './cookies')
+    for f in glob.glob(os.path.join(cookie_path, '*.txt')):
+        _chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600
+
+    # Restrict sensitive directories
+    for d in [cookie_path, './sessions', './data']:
+        if os.path.isdir(d):
+            _chmod(d, stat.S_IRWXU)  # 700
+
+
 def setup_logging():
     """Configure logging for the application with sensitive data filtering."""
     from utils.log_sanitizer import SensitiveDataFilter
@@ -193,10 +241,20 @@ def main_telegram():
     """Run Telegram bot mode."""
     # Load environment variables
     load_dotenv()
-    
+
+    # Validate ADMIN_USER_ID before anything else (item 9)
+    raw_admin = os.getenv('ADMIN_USER_ID', '')
+    if not raw_admin:
+        print("❌ Error: ADMIN_USER_ID not set in .env file", file=sys.stderr)
+        sys.exit(1)
+    _validate_admin_ids(raw_admin)
+
+    # Apply restrictive file permissions (item 9)
+    _startup_permissions()
+
     # Setup logging
     setup_logging()
-    
+
     # Get configuration
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
@@ -204,11 +262,11 @@ def main_telegram():
         print("   Please add your bot token to .env:")
         print("   TELEGRAM_BOT_TOKEN=your_bot_token_here")
         sys.exit(1)
-    
+
     apify_token = os.getenv('APIFY_TOKEN', '')
     download_path = os.getenv('DOWNLOAD_PATH', './downloads')
     cookie_path = os.getenv('COOKIE_PATH', './cookies')
-    
+
     # Import and run bot
     from bot.telegram_bot import run_telegram_bot
     run_telegram_bot(token, download_path, cookie_path, apify_token)

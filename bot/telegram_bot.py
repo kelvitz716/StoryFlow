@@ -278,7 +278,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     
     async def post_init(application):
         global mtproto_client, download_queue
-        # MTProto client init
+        # MTProto client init (item 9: ImportError is non-fatal)
         try:
             from auth.mtproto import init_mtproto
             mtproto_client = await init_mtproto()
@@ -286,6 +286,11 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
             if mtproto_client:
                 mtproto_client.code_callback = lambda: get_auth_code(application, access_manager)
                 mtproto_client.password_callback = lambda: get_auth_password(application, access_manager)
+        except ImportError:
+            logging.warning(
+                "MTProto (Pyrogram/TgCrypto) is unavailable — "
+                "files >50 MB will fall back to the Bot API 50 MB limit."
+            )
         except Exception as e:
             logging.warning(f"MTProto init failed: {e}")
             

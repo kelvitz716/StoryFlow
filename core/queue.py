@@ -376,11 +376,18 @@ def get_queue() -> DownloadQueue:
 async def init_queue(
     snapchat_downloader,
     gallery_dl_downloader,
-    max_concurrent: int = 10,
-    max_per_user: int = 20,
+    max_concurrent: int = None,
+    max_per_user: int = None,
     status_callback: Optional[Callable] = None
 ):
     global download_queue
+
+    # Read concurrency limits from env (item 9); clamp to sane ranges
+    if max_concurrent is None:
+        max_concurrent = max(1, min(10, int(os.getenv('MAX_CONCURRENT_JOBS', '2'))))
+    if max_per_user is None:
+        max_per_user = int(os.getenv('MAX_JOBS_PER_USER', '5'))
+
     download_queue = DownloadQueue(
         max_concurrent=max_concurrent,
         max_per_user=max_per_user,
@@ -390,3 +397,4 @@ async def init_queue(
     download_queue.gallery_dl = gallery_dl_downloader
     await download_queue.start()
     return download_queue
+
