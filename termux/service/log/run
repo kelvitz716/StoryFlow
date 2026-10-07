@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# StoryFlow runit logger run script
+# Pipes service output through svlogd for persistent rotating logs.
+# Place this file at: ~/.config/sv/storyflow/log/run
+exec svlogd -tt "$HOME/logs/storyflow"
