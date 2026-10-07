@@ -1,7 +1,9 @@
 # StoryFlow Project Handover Document
 
 ## Project Overview
-StoryFlow is a unified media downloader designed for social media content. It supports Snapchat, Instagram, TikTok, Twitter/X, and Facebook. The project is built with Python 3.12 and can run as either a CLI tool or a Telegram bot.
+StoryFlow is a unified media downloader for social media content. It supports Snapchat, Instagram, TikTok, Twitter/X, and Facebook. The project is built with Python 3.12 and runs as a Telegram bot (primary) or CLI tool.
+
+**Deployment target:** Android phone running Termux, co-hosted with Jellyfin, Sonarr, Radarr, and qBittorrent, reachable over Tailscale (100.64.0.0/10). See `termux/README.md` for setup.
 
 ---
 
@@ -9,49 +11,60 @@ StoryFlow is a unified media downloader designed for social media content. It su
 ```text
 .
 ├── auth                    # Authentication & Access Control
-│   ├── access.py           # Whitelisting & Admin logic
-│   ├── cookies.py          # Cookie management (IG, FB, TikTok)
-│   ├── __init__.py
-│   └── mtproto.py          # MTProto client for 2GB uploads
-├── bot                     # Telegram Interaction Layer
-│   ├── __init__.py
-│   └── telegram_bot.py     # Main bot handlers & UI
-├── core                    # Business Logic
-│   ├── __init__.py
-│   ├── platform.py         # URL identification & routing
-│   ├── queue.py            # Async download worker queue
-│   ├── rate_limiter.py     # API protection
-│   ├── retry.py            # Resilience logic
-│   ├── security.py         # Sanitization
-│   ├── stats.py            # Usage statistics
-│   └── storage.py          # File management
-├── docs                    # Documentation (Second Brain)
-│   ├── guides
-│   │   ├── SETUP.md
-│   │   └── USAGE.md
-│   ├── planning
-│   │   └── IMPROVEMENTS.md
-│   ├── technical
-│   │   ├── ARCHITECTURE.md
-│   │   ├── command_flow.md
-│   │   └── SPECIFICATIONS.md
-│   └── README.md
-├── downloaders             # Platform Specific Wrappers
-│   ├── gallery_dl.py       # Wrapper for gallery-dl (IG, TT, FB, X)
+│   ├── access.py           # Whitelisting & Admin logic (SQLite-backed)
+│   ├── cookies.py          # Cookie management (IG, FB, TikTok)
 │   ├── __init__.py
-│   └── snapchat.py         # Apify-powered Snapchat story downloader
-├── scripts                 # Utility Scripts
-│   └── generate_session.py # For MTProto login persistence
-├── tests                   # Testing
-│   ├── run_test_links.py
-│   └── test_links.md
+│   └── mtproto.py          # MTProto client for files >50 MB (optional)
+├── bot                     # Telegram Interaction Layer
+│   ├── guards.py           # require_allowed() access guard
+│   ├── handlers.py         # Command routing & message handling
+│   ├── menus.py            # Inline keyboard menus
+│   ├── uploader.py         # Media delivery & MTProto fallback
+│   ├── __init__.py
+│   └── telegram_bot.py     # Entry point & component wiring
+├── core                    # Business Logic
+│   ├── __init__.py
+│   ├── platform.py         # URL identification & SSRF-gated routing
+│   ├── queue.py            # Async download worker queue (SQLite-backed)
+│   ├── rate_limiter.py     # API protection
+│   ├── security.py         # validate_domain, is_safe_url (SSRF protection)
+│   ├── stats.py            # Usage statistics
+│   └── storage.py          # File management
+├── docs                    # Documentation
+│   ├── guides/
+│   ├── planning/
+│   │   └── IMPROVEMENTS.md
+│   ├── technical/
+│   │   └── SPECIFICATIONS.md
+│   └── README.md
+├── downloaders             # Platform-specific wrappers
+│   ├── base.py             # BaseDownloader (subprocess hygiene, stderr drain)
+│   ├── gallery_dl.py       # gallery-dl & yt-dlp wrapper (IG, TT, FB, X)
+│   ├── __init__.py
+│   └── snapchat.py         # Snapchat story downloader (direct scraper + yt-dlp)
+├── scripts                 # Utility scripts
+│   └── generate_session.py # MTProto session string generator
+├── termux                  # Termux/Android deployment
+│   ├── setup.sh            # First-install script
+│   ├── update-extractors.sh
+│   ├── service/run         # runit service script
+│   ├── service/log/run     # runit log script
+│   └── README.md           # Full Termux deployment guide
+├── tests                   # pytest test suite
+│   ├── test_security.py
+│   ├── test_platform_redirect.py
+│   ├── test_subprocess.py
+│   ├── test_stderr_leak.py
+│   ├── test_access_control.py
+│   ├── test_cookie_fallback.py
+│   └── test_config.py
 ├── utils                   # Helpers
-│   ├── __init__.py
-│   └── log_sanitizer.py
-├── deploy.sh               # AWS/Docker Deployment Script
-├── Dockerfile              # Docker configuration
-├── README.md               # Quick Start Guide
-├── requirements.txt        # Python dependencies
+│   ├── __init__.py
+│   ├── bot_utils.py        # resolve_shortlink (hop-by-hop validation), formatters
+│   └── log_sanitizer.py
+├── .env.example            # Environment template (see all variables here)
+├── requirements.txt        # Pinned production dependencies
+├── requirements-dev.txt    # Dev dependencies (pytest)
 └── storyflow.py            # Main entry point
 ```
 
@@ -60,65 +73,63 @@ StoryFlow is a unified media downloader designed for social media content. It su
 ## Architecture & Core Technologies
 - **Python 3.12**: Required for compatibility with `tgcrypto` and latest async patterns.
 - **Telegram Bot API (python-telegram-bot)**: Primary interface.
-- **Pyrogram (MTProto)**: Used as a side-car client to bypass the 50MB Bot API limit, allowing uploads up to 2GB.
-- **gallery-dl & yt-dlp**: Core engines for media extraction (Instagram, TikTok, Facebook, Twitter/X).
-- **Apify** (`crawlerbros/snapchat-user-stories-scraper`): Cloud-side headless browser actor for Snapchat story downloads. Eliminates the need to run Playwright/Chromium locally — the server sends a single HTTP POST and receives direct media URLs in return.
-- **Docker**: Containerized deployment with volume persistence for cookies and sessions.
+- **Pyrogram (MTProto)**: Optional side-car client for uploads >50 MB. If Pyrogram/TgCrypto are not installed (common on Termux), the bot continues with the standard 50 MB Bot API limit.
+- **gallery-dl & yt-dlp**: Core extraction engines (Instagram, TikTok, Facebook, Twitter/X).
+- **Snapchat**: Direct HTTP scraping of `story.snapchat.com` combined with yt-dlp's `SnapchatSpotlight` extractor for Spotlight URLs. No external cloud service is required.
+- **SQLite**: Backing store for the job queue and user access list.
 
 ---
 
-## Recent Key Changes & Refactoring
+## Security Architecture (hardening/termux branch)
 
-### 1. Advanced Access Control (`auth/access.py`)
-- **Telegram Channel Support**: The bot now supports being used in channels linked to discussion groups. It correctly identifies `automatic_forward` messages from channels and allows whitelisting by Channel ID.
-- **Anonymous Sender Support**: Handles messages from `@GroupAnonymousBot` by falling back to the `chat_id` for authorization checks.
-- **Whitelisting Persistence**: Allowed users and channels are stored in `data/allowed_users.json`, ensuring access remains across restarts.
-
-### 2. Large File Handling
-- Integrated **MTProto** for uploading files larger than 50MB.
-- Implemented a **progress bar** for large uploads to provide user feedback.
-- Automated **file cleanup** immediately after upload to save server disk space.
-
-### 3. AWS Deployment Optimization
-- `deploy.sh` script handles everything: `.env` configuration, Docker build, volume creation, and permission fixes.
-- Configured for **AWS Free Tier** (EC2 t2.micro) with a swap file recommended for memory-intensive gallery-dl operations.
-
-### 4. Snapchat Backend Migration (April 2026)
-- **Old backend** (`snapstories.netlify.app`) confirmed dead (permanent `404`).
-- `snapchat-dlp` pip package also broken (`APIResponseError`) due to Snapchat SPA changes.
-- Migrated to **Apify** with a dual-actor approach covering all public Snapchat content:
-  - `igview-owner/snapchat-story-viewer` → active 24h stories
-  - `crawlerbros/snapchat-user-stories-scraper` → saved highlight albums
-  - Both called per request; results merged and deduplicated by `mediaUrl`.
-  - `/spotlight/` URLs bypassed to `yt-dlp` (`SnapchatSpotlight` extractor) via `queue.py` — no Apify cost.
-- `SNAPCHAT_API_BASE_URL` env var replaced with `APIFY_TOKEN`.
+| Layer | What it does |
+|-------|-------------|
+| `validate_domain` | Rejects URLs with userinfo (`@`), non-http(s) schemes, trailing-dot attacks |
+| `is_safe_url` | Blocks loopback, RFC-1918, link-local, Tailscale CGNAT (100.64/10), multicast, unresolvable hosts; unwraps IPv4-mapped IPv6 |
+| `identify_platform` | Calls `is_safe_url` on **every** URL before platform dispatch |
+| `resolve_shortlink` | Manual hop-by-hop redirect follower (max 5 hops); calls `is_safe_url` before each hop; raises `UnsafeRedirectError` on failure (fail closed) |
+| `BaseDownloader` | `start_new_session=True`; concurrent stderr drain capped at 64 KB; wall-clock timeout → `killpg`; 1 MB pipe buffer; never returns raw stderr in result dicts |
+| `require_allowed` | Guards all handlers; silent in groups, rejects with user ID in private |
+| Admin cookie fallback | Disabled by default; opt-in via `ALLOW_ADMIN_COOKIE_FALLBACK=true` |
+| Startup | Validates `ADMIN_USER_ID` numerically; `chmod 600 .env` + cookie files; `chmod 700` on sessions/data directories |
 
 ---
 
 ## Authentication Systems
-1. **Bot Token**: Standard Telegram bot token for interaction.
-2. **MTProto Session**: `API_ID` and `API_HASH` are required. Use `scripts/generate_session.py` to create a `TELEGRAM_SESSION_STRING` for headless production environments.
-3. **Cookies**: Users can upload `cookies.txt` (Netscape format) via the bot to enable downloading of private or age-restricted content (Instagram Stories, Facebook Reels).
+1. **Bot Token**: Set `TELEGRAM_BOT_TOKEN` in `.env`.
+2. **MTProto Session** (optional): Set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `TELEGRAM_SESSION_STRING`. Generate the session string with `python scripts/generate_session.py`.
+3. **Cookies**: Users upload `cookies.txt` (Netscape format) via `/manage_cookies`. Files are size-checked (≤256 KB) and extension-checked (`.txt`) before `get_file()` is ever called.
 4. **Apify API Token**: Required for Snapchat story downloads. Set `APIFY_TOKEN` in `.env`. Free tier: $5/month at [apify.com](https://apify.com).
 
 ---
 
+## Environment Variables
+See `.env.example` for the full annotated list. Key variables added by the hardening branch:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MAX_CONCURRENT_JOBS` | `2` | Parallel download workers (clamped 1–10) |
+| `MAX_JOBS_PER_USER` | `5` | Max queued jobs per user |
+| `MAX_FILE_SIZE_MB` | `500` | Reject files larger than this (gallery-dl + yt-dlp) |
+| `DOWNLOAD_TIMEOUT_SECONDS` | `600` | Wall-clock timeout per subprocess |
+| `ALLOW_ADMIN_COOKIE_FALLBACK` | `false` | Share admin cookies with all users (opt-in) |
+
+---
 
 ## Current Status & Known Limitations
-- **Snapchat Stories**: Fetched via `igview-owner/snapchat-story-viewer` Apify actor. Public creator profiles only.
-- **Snapchat Highlights**: Fetched via `crawlerbros/snapchat-user-stories-scraper`. Returns saved story albums with rich metadata.
-- **Snapchat Spotlight**: Routed to `yt-dlp` (built-in `SnapchatSpotlight` extractor). No Apify cost.
-- **Instagram**: Very sensitive to rate limits. Always use fresh cookies for stable story downloading.
-- **Disk Space**: While there is auto-cleanup, failed downloads might leave artifacts. Use the `/purge` command (Admin only) to clear the `downloads/` directory.
+- **Snapchat Stories / Highlights / Spotlight**: Handled via direct scraper; Apify is no longer required but the token is still read if present.
+- **Instagram**: Sensitive to rate limits. Always use fresh cookies.
+- **MTProto on Termux**: TgCrypto may fail to build; the bot continues without it (files ≤50 MB only).
+- **Disk Space**: Use `/purge` (admin only) to clear `downloads/` if space is low.
 
 ---
 
 ## Future Roadmap
-- [ ] **Multi-account rotation** for Instagram cookies to avoid blocks.
-- [ ] **Web Dashboard** for viewing global statistics and managing users.
-- [ ] **Direct Streaming** support to avoid disk writes entirely.
-- [ ] **Proxy Integration** at the downloader level to bypass geo-blocks.
+- [ ] Multi-account Instagram cookie rotation.
+- [ ] Web dashboard for statistics and user management.
+- [ ] Direct streaming support (avoid disk writes).
+- [ ] Proxy integration at the downloader level for geo-blocks.
 
 ---
 
-**Handover completed by Antigravity AI.**
+**Handover updated by Antigravity AI — hardening/termux branch.**
