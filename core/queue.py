@@ -272,6 +272,7 @@ class DownloadQueue:
                     if not result.get('success'):
                         job.status = JobStatus.FAILED
                         job.completed_at = datetime.now()
+                        # Only store the sanitised error key, never raw stderr
                         job.error = result.get('error', 'Download failed')
                         job.message = f"Failed: {job.error}"
                         job.save_to_db()
@@ -301,11 +302,12 @@ class DownloadQueue:
                     await self._notify_status(job)
                     
                 except Exception as e:
-                    logging.error(f"Job {job.job_id} failed: {e}")
+                    logging.error(f"Job {job.job_id} failed with exception: {e}")
                     job.status = JobStatus.FAILED
                     job.completed_at = datetime.now()
-                    job.error = str(e)
-                    job.message = f"Error: {e}"
+                    # Do NOT expose internal exception details to users
+                    job.error = "Download failed due to an internal error"
+                    job.message = "Download failed"
                     job.save_to_db()
                     await self._notify_status(job)
                 
