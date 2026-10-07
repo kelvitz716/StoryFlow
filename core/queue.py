@@ -289,7 +289,7 @@ class DownloadQueue:
 
                     is_spotlight = "/spotlight/" in job.url
                     if job.platform == "Snapchat" and self.snapchat and not is_spotlight:
-                         result = await self.snapchat.download(job.url, job.user_id, job.job_id)
+                         result = await self.snapchat.download(job.url, job.user_id, job.job_id, progress_callback=progress_callback)
                     elif self.gallery_dl:
                          result = await self.gallery_dl.download(job.url, job.platform, job.user_id, job.job_id, progress_callback=progress_callback)
                     else:
