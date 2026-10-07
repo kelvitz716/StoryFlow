@@ -387,7 +387,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
         await handle_document(u, c, cookie_manager, access_manager)
 
     async def _url_wrapper(u, c):
-        await handle_url(u, c, access_manager, download_queue, mtproto_client)
+        await handle_url(u, c, access_manager, download_queue, mtproto_client, cookie_manager)
 
     app.add_handler(CommandHandler("start", _start_wrapper))
     app.add_handler(CommandHandler("help", _help_wrapper))

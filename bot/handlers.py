@@ -34,7 +34,7 @@ AUTH_ADMIN_ID = None
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                      access_manager: AccessManager, download_queue,
-                     mtproto_client=None) -> None:
+                     mtproto_client=None, cookie_manager=None) -> None:
     """Handle URL message."""
     if not update.effective_message or not update.effective_message.text:
         return
