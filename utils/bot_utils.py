@@ -186,8 +186,8 @@ def format_error_message(error: str, platform: Optional[str] = None) -> str:
 
     # Common error mapping (order matters — more specific checks first)
     error_lower = error.lower()
-    if 'login' in error_lower or 'cookie' in error_lower or 'authentication' in error_lower:
-        hint = "\n\n💡 *Hint:* This content may require login cookies. Try adding them in 'Manage Cookies'."
+    if 'login' in error_lower or 'cookie' in error_lower or 'auth' in error_lower or 'unauthorized' in error_lower:
+        hint = "\n\n🔒 *Login Required*\nThis content requires login cookies. Send `/start` in private chat -> *🍪 Manage Cookies* to upload your `cookies.txt` file."
     elif 'not found' in error_lower or '404' in error_lower or 'no active stories' in error_lower:
         hint = "\n\n💡 *Hint:* The link might be invalid, or the user/content has no active public stories."
     elif 'rate limit' in error_lower:
