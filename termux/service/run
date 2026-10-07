@@ -1,12 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # StoryFlow runit service run script
-# Place this file at: ~/.config/sv/storyflow/run
-# Enable with: sv-enable storyflow
+# Place this file at: ~/.config/sv/storyflow/run (or $SVDIR/storyflow/run)
 set -e
 
 REPO_DIR="$HOME/StoryFlow"
 VENV="$REPO_DIR/venv"
 
+export PATH="$VENV/bin:/data/data/com.termux/files/usr/bin:$PATH"
+
 cd "$REPO_DIR"
 exec 2>&1
-exec "$VENV/bin/python" storyflow.py
+exec python storyflow.py
