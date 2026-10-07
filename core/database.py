@@ -61,6 +61,13 @@ class Database:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Per-user download quality preferences
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_prefs (
+                    user_id TEXT PRIMARY KEY,
+                    quality TEXT DEFAULT 'best'
+                )
+            ''')
             
 # Global database instance
 db = Database()

@@ -4,12 +4,28 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from auth.access import AccessManager
 from core.stats import stats_manager
 
+QUALITY_LABELS = {
+    'best':  '🔝 Best (default)',
+    '1080p': '🎥 1080p',
+    '720p':  '📺 720p',
+    '480p':  '📱 480p',
+    'audio': '🎵 Audio only',
+}
+
+
+def get_cancel_keyboard(job_id: str) -> InlineKeyboardMarkup:
+    """Inline keyboard with a cancel button for a specific job."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_job_{job_id}")]
+    ])
+
 def get_main_menu_keyboard(user_id: Optional[str] = None, access_manager: Optional[AccessManager] = None):
     """Get the main menu inline keyboard."""
     keyboard = [
         [InlineKeyboardButton("📖 How to Use", callback_data="menu_help")],
         [InlineKeyboardButton("🍪 Manage Cookies", callback_data="menu_cookies")],
         [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
+        [InlineKeyboardButton("🋺 Quality", callback_data="menu_quality")],
     ]
     
     if user_id and access_manager and access_manager.is_admin(user_id):
@@ -138,6 +154,29 @@ async def send_delete_cookies_menu(target, is_new_message: bool = False):
         [InlineKeyboardButton("⬅️ Back", callback_data="menu_cookies")],
     ])
     
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+
+async def send_quality_menu(target, user_id: str, is_new_message: bool = False):
+    """Send or edit the quality selection menu."""
+    from core.user_prefs import get_user_quality, QUALITY_OPTIONS
+    current = get_user_quality(user_id)
+    lines = ['🋺 *Download Quality*\n', 'Choose the quality for video downloads (yt-dlp).\n']
+    for key, label in QUALITY_LABELS.items():
+        tick = '✅' if key == current else '⬜'
+        lines.append(f'{tick} {label}')
+    text = '\n'.join(lines)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton('🔝 Best',  callback_data='quality_best'),
+         InlineKeyboardButton('🎥 1080p', callback_data='quality_1080p')],
+        [InlineKeyboardButton('📺 720p',  callback_data='quality_720p'),
+         InlineKeyboardButton('📱 480p',  callback_data='quality_480p')],
+        [InlineKeyboardButton('🎵 Audio only', callback_data='quality_audio')],
+        [InlineKeyboardButton('⬅️ Main Menu', callback_data='menu_main')],
+    ])
     if is_new_message:
         await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
     else:

@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, Application
 from core.platform import identify_platform
 from auth.access import AccessManager
 from auth.cookies import CookieManager  # [NEW]
-from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
+from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu, get_cancel_keyboard
 from bot.uploader import batch_upload_media
 from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError
 from bot.guards import require_allowed
@@ -164,7 +164,11 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 register_job_message(job.job_id, status_msg)
                 pos = download_queue.get_queue_position(job.job_id)
                 if pos > 0:
-                     await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\\nWaiting for worker...", parse_mode='Markdown')
+                     await status_msg.edit_text(
+                         f"⏳ *Queued* (Position: {pos})\\nWaiting for worker...",
+                         parse_mode='Markdown',
+                         reply_markup=get_cancel_keyboard(job.job_id)
+                     )
             else:
                 await status_msg.edit_text("⚠️ *Queue Full*\\nPlease wait for your active downloads to finish.")
         else:

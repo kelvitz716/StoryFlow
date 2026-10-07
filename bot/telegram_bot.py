@@ -32,7 +32,8 @@ from core.stats import stats_manager
 # Bot module imports [NEW]
 from bot.menus import (
     send_main_menu, send_help_menu, send_cookies_menu, 
-    send_admin_menu, send_delete_cookies_menu, get_back_button
+    send_admin_menu, send_delete_cookies_menu, get_back_button,
+    send_quality_menu, get_cancel_keyboard, QUALITY_LABELS
 )
 from bot.handlers import (
     handle_url, start, help_command, handle_document,
@@ -87,6 +88,10 @@ async def update_job_status(application: Application, job: DownloadJob):
         elif job.status == JobStatus.FAILED:
             error_text = format_error_message(job.error or "Unknown failure", job.platform)
             await status_msg.edit_text(error_text, parse_mode='Markdown')
+            pop_job_message(job.job_id)
+
+        elif job.status == JobStatus.CANCELLED:
+            await status_msg.edit_text("\u274c Job cancelled.", parse_mode='Markdown')
             pop_job_message(job.job_id)
                 
     except Exception as e:
@@ -247,6 +252,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "twitter": "🐦 *Twitter/X Tips*\n\nNo cookies required usually."
         }
         await query.edit_message_text(tips.get(platform, "No tips available."), parse_mode='Markdown', reply_markup=get_back_button("menu_help"))
+
+    # Quality selection
+    elif data == 'menu_quality':
+        await send_quality_menu(query, user_id, is_new_message=False)
+    elif data.startswith('quality_'):
+        key = data.removeprefix('quality_')
+        from core.user_prefs import set_user_quality
+        if set_user_quality(user_id, key):
+            label = QUALITY_LABELS.get(key, key)
+            await query.answer(f'Quality set to {label}', show_alert=False)
+            await send_quality_menu(query, user_id, is_new_message=False)
+        else:
+            await query.answer('Invalid quality option', show_alert=True)
+
+    # Cancel a queued job
+    elif data.startswith('cancel_job_'):
+        job_id = data.removeprefix('cancel_job_')
+        cancelled = await download_queue.cancel_job(job_id, user_id)
+        if cancelled:
+            await query.edit_message_text('✅ Job cancelled.')
+        else:
+            await query.edit_message_text('⚠️ Could not cancel — job may already be running or completed.')
 
 # ============= INFRASTRUCTURE & BOOTSTRAP =============
 
