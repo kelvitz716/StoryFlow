@@ -339,12 +339,31 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     app.post_stop = post_stop
     app.bot_data['download_path'] = download_path
     
-    # Handlers
-    from functools import partial
+    # Handler wrapper functions (async def wrappers preserve inspect.iscoroutinefunction
+    # and access dynamic variables like download_queue and mtproto_client at runtime)
     from bot.handlers import queue_command, handle_admin_input
-    app.add_handler(CommandHandler("start", partial(start, access_manager=access_manager)))
-    app.add_handler(CommandHandler("help", partial(help_command, access_manager=access_manager)))
-    app.add_handler(CommandHandler("queue", partial(queue_command, access_manager=access_manager, download_queue=download_queue)))
+
+    async def _start_wrapper(u, c):
+        await start(u, c, access_manager)
+
+    async def _help_wrapper(u, c):
+        await help_command(u, c, access_manager)
+
+    async def _queue_wrapper(u, c):
+        await queue_command(u, c, access_manager, download_queue)
+
+    async def _admin_input_wrapper(u, c):
+        await handle_admin_input(u, c, access_manager)
+
+    async def _document_wrapper(u, c):
+        await handle_document(u, c, cookie_manager, access_manager)
+
+    async def _url_wrapper(u, c):
+        await handle_url(u, c, access_manager, download_queue, mtproto_client)
+
+    app.add_handler(CommandHandler("start", _start_wrapper))
+    app.add_handler(CommandHandler("help", _help_wrapper))
+    app.add_handler(CommandHandler("queue", _queue_wrapper))
     
     # Callback Query
     app.add_handler(CallbackQueryHandler(button_callback))
@@ -356,17 +375,17 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     # Runs in group 0 before the URL handler so bare IDs/numbers are handled correctly.
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
-        partial(handle_admin_input, access_manager=access_manager)
+        _admin_input_wrapper
     ), group=0)
 
     # Document handler for cookie uploads
-    app.add_handler(MessageHandler(filters.Document.ALL, partial(handle_document, cookie_manager=cookie_manager, access_manager=access_manager)))
+    app.add_handler(MessageHandler(filters.Document.ALL, _document_wrapper))
     
     # URL Handler (group 1 so admin handler gets first crack at group 0)
     # Matches any message containing an http/https URL (not just messages starting with one)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'https?://'),
-        partial(handle_url, access_manager=access_manager, download_queue=download_queue, mtproto_client=mtproto_client)
+        _url_wrapper
     ), group=1)
     
     logging.info("🤖 StoryFlow Bot started!")
