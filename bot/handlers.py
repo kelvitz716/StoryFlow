@@ -13,7 +13,7 @@ from auth.access import AccessManager
 from auth.cookies import CookieManager  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError
 import asyncio
 import time
 
@@ -119,8 +119,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         urls = urls[:10]
 
     for raw_url in urls:
-        # Resolve any shortlinks first
-        url = await resolve_shortlink(raw_url)
+        # Resolve any shortlinks first; fails closed on unsafe hops
+        try:
+            url = await resolve_shortlink(raw_url)
+        except UnsafeRedirectError:
+            logging.warning(f"handle_url: rejected unsafe/unresolvable redirect from {raw_url!r}")
+            await msg.reply_text(
+                "⛔ *This link can't be downloaded.*",
+                parse_mode='Markdown'
+            )
+            continue
 
         # Identify platform
         platform = identify_platform(url)
