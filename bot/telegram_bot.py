@@ -10,7 +10,7 @@ import time
 import random
 from typing import Optional
 
-from telegram import Update, Document, InlineKeyboardMarkup
+from telegram import Update, Document, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -38,6 +38,7 @@ from bot.handlers import (
     handle_url, start, help_command, handle_document,
     handle_auth_input, get_auth_code, get_auth_password
 )
+from bot.guards import require_allowed
 from bot.uploader import batch_upload_media
 from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, JOB_MESSAGES, pop_job_message
 from core.database import db
@@ -95,7 +96,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Handle all inline keyboard button callbacks."""
     query = update.callback_query
     await query.answer()
-    
+
+    # Access guard — unauthorized users get no response from any button branch
+    if not await require_allowed(update, access_manager):
+        return
+
     user_id = str(update.effective_user.id)
     data = query.data
     
@@ -248,7 +253,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_token: str) -> None:
     """Initialize and run the StoryFlow Telegram bot."""
     global snapchat, gallery_dl, cookie_manager, mtproto_client, access_manager
-    
+
+    # Silence libraries that log the bot token in request URLs (item 7)
+    import logging as _logging
+    _logging.getLogger("httpx").setLevel(_logging.WARNING)
+    _logging.getLogger("httpcore").setLevel(_logging.WARNING)
+
     admin_id = os.getenv('ADMIN_USER_ID')
     if not admin_id:
         logging.error("❌ ADMIN_USER_ID not set!")
@@ -300,7 +310,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     # Handlers
     from bot.handlers import queue_command, handle_admin_input
     app.add_handler(CommandHandler("start", lambda u, c: start(u, c, access_manager)))
-    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("help", lambda u, c: help_command(u, c, access_manager)))
     app.add_handler(CommandHandler("queue", lambda u, c: queue_command(u, c, access_manager, download_queue)))
     
     # Callback Query
@@ -317,7 +327,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     ), group=0)
 
     # Document handler for cookie uploads
-    app.add_handler(MessageHandler(filters.Document.ALL, lambda u, c: handle_document(u, c, cookie_manager)))
+    app.add_handler(MessageHandler(filters.Document.ALL, lambda u, c: handle_document(u, c, cookie_manager, access_manager)))
     
     # URL Handler (group 1 so admin handler gets first crack at group 0)
     # Matches any message containing an http/https URL (not just messages starting with one)

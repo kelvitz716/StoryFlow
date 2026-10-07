@@ -14,6 +14,7 @@ from auth.cookies import CookieManager  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
 from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError
+from bot.guards import require_allowed
 import asyncio
 import time
 
@@ -170,12 +171,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await status_msg.edit_text("⚠️ System Error: Queue not active.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
+    if not await require_allowed(update, access_manager):
+        return
     user_id = str(update.effective_user.id)
     chat_id = str(update.effective_chat.id)
     access_manager.register_chat_id(user_id, chat_id)
     await send_main_menu(update.message, user_id, access_manager, is_new_message=True)
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
+    if not await require_allowed(update, access_manager):
+        return
     await send_help_menu(update.message, is_new_message=True)
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager, download_queue) -> None:
@@ -259,24 +264,36 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # Send fresh admin menu so the admin can continue managing users
     await send_admin_menu(msg, user_id, access_manager, is_new_message=True)
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, cookie_manager: CookieManager) -> None:
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, cookie_manager: CookieManager, access_manager: AccessManager) -> None:
     """Handle document (cookie file) upload."""
-    document: Document = update.message.document
+    # Access guard (item 6)
+    if not await require_allowed(update, access_manager):
+        return
+
+    document = update.message.document
     user_id = str(update.effective_user.id)
-    
+
+    # Reject oversized or missing file size BEFORE downloading (item 6)
+    MAX_COOKIE_BYTES = 256 * 1024  # 256 KB
+    if document.file_size is None or document.file_size > MAX_COOKIE_BYTES:
+        await update.message.reply_text(
+            "❌ Cookie file too large. Maximum size is 256 KB."
+        )
+        return
+
     awaiting_platform = context.user_data.get('awaiting_cookies')
     if not awaiting_platform:
         # Silently ignore non-.txt documents (like media files uploaded by MTProto)
         if not document.file_name or not document.file_name.endswith('.txt'):
             return
-            
+
         await update.message.reply_text("📎 I wasn't expecting a cookie file. Go to 'Manage Cookies' first.")
         return
-    
+
     # Clear the awaiting state immediately so re-sending a file works cleanly
     context.user_data.pop('awaiting_cookies', None)
-    
-    if not document.file_name.endswith('.txt'):
+
+    if not document.file_name or not document.file_name.endswith('.txt'):
         await update.message.reply_text("❌ Please send a .txt file.")
         return
     
