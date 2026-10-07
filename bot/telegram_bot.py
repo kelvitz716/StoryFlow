@@ -388,5 +388,16 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
         _url_wrapper
     ), group=1)
     
+    # Global Error Handler for graceful rate-limit handling
+    from telegram.error import RetryAfter
+
+    async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if isinstance(context.error, RetryAfter):
+            logging.warning(f"🤫 Telegram rate limit (RetryAfter {context.error.retry_after}s) — update processing deferred.")
+        else:
+            logging.error(f"⚠️ Exception in update handler: {context.error}")
+
+    app.add_error_handler(on_error)
+
     logging.info("🤖 StoryFlow Bot started!")
     app.run_polling()

@@ -164,15 +164,24 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 register_job_message(job.job_id, status_msg)
                 pos = download_queue.get_queue_position(job.job_id)
                 if pos > 0:
-                     await status_msg.edit_text(
-                         f"⏳ *Queued* (Position: {pos})\\nWaiting for worker...",
-                         parse_mode='Markdown',
-                         reply_markup=get_cancel_keyboard(job.job_id)
-                     )
+                    try:
+                        await status_msg.edit_text(
+                            f"⏳ *Queued* (Position: {pos})\nWaiting for worker...",
+                            parse_mode='Markdown',
+                            reply_markup=get_cancel_keyboard(job.job_id)
+                        )
+                    except Exception as e:
+                        logging.debug(f"Status message edit skipped: {e}")
             else:
-                await status_msg.edit_text("⚠️ *Queue Full*\\nPlease wait for your active downloads to finish.")
+                try:
+                    await status_msg.edit_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
+                except Exception:
+                    pass
         else:
-            await status_msg.edit_text("⚠️ System Error: Queue not active.")
+            try:
+                await status_msg.edit_text("⚠️ System Error: Queue not active.")
+            except Exception:
+                pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
     if not await require_allowed(update, access_manager):
