@@ -20,6 +20,7 @@ class JobStatus(Enum):
     UPLOADING = "uploading"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -217,6 +218,26 @@ class DownloadQueue:
             'max_concurrent': self.max_concurrent,
             'active_jobs': active,
         }
+
+    async def cancel_job(self, job_id: str, user_id: str) -> bool:
+        """
+        Cancel a QUEUED job belonging to user_id.
+        Running jobs (DOWNLOADING/UPLOADING) cannot be cancelled this way
+        since the subprocess is already active; they will be told to wait for
+        completion. Returns True if the job was found and cancelled.
+        """
+        job = self._jobs.get(job_id)
+        if not job or job.user_id != user_id:
+            return False
+        if job.status not in (JobStatus.QUEUED,):
+            return False  # can't cancel mid-download
+        job.status = JobStatus.CANCELLED
+        job.completed_at = datetime.now()
+        job.message = 'Cancelled'
+        job.save_to_db()
+        await self._notify_status(job)
+        self._jobs.pop(job_id, None)
+        return True
     
     async def _worker(self, worker_id: int):
         logging.debug(f"Worker {worker_id} started")
@@ -230,7 +251,12 @@ class DownloadQueue:
                     raise
                 
                 logging.info(f"⚙️ Worker {worker_id} processing job {job.job_id}")
-                
+
+                # Job may have been cancelled while waiting in the queue
+                if job.status == JobStatus.CANCELLED:
+                    self._queue.task_done()
+                    continue
+
                 try:
                     job.status = JobStatus.DOWNLOADING
                     job.message = "Downloading content..."
