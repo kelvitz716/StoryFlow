@@ -53,6 +53,8 @@ class FakeMessage:
         self._reply_raises: Exception = None
 
     async def reply_text(self, text, parse_mode=None, **kwargs):
+        if getattr(self, "always_raises", False) and self._reply_raises is not None:
+            raise self._reply_raises
         if self._reply_raises is not None:
             exc = self._reply_raises
             self._reply_raises = None
@@ -198,3 +200,65 @@ async def test_gate_open_means_no_per_link_replies_for_next_5_links(monkeypatch)
 
     assert per_link_reply_counts == [0, 0, 0, 0, 0], f"Expected all zeros, got {per_link_reply_counts}"
     assert len(jobs_submitted) == 6, f"Expected 6 jobs submitted, got {len(jobs_submitted)}"
+
+
+@pytest.mark.asyncio
+async def test_always_retry_after_3_links_all_submitted_no_traceback(monkeypatch, caplog):
+    """
+    Test with a FakeMessage whose reply_text ALWAYS raises RetryAfter(40):
+    3 links -> 3 jobs submitted, handler never raises, no tracebacks.
+    """
+    import logging
+    monkeypatch.setenv("BACKLOG_SUBMIT_DELAY_SECONDS", "0")
+
+    _CHAT_BURSTS.clear()
+    _LAST_BACKLOG_SUBMIT.clear()
+    _BACKLOG_JOBS.clear()
+
+    fake_clock = FakeClock(start_time=2000.0)
+    coord = EditCoordinator(
+        edit_min_interval=0.0,
+        msg_min_interval=0.0,
+        clock=fake_clock.time,
+        sleep_func=fake_clock.sleep,
+    )
+    set_edit_coordinator(coord)
+
+    chat_id = 5003
+    fresh_date = datetime.fromtimestamp(1995.0, tz=timezone.utc)
+
+    jobs_submitted = []
+    mock_queue = make_queue(jobs_submitted)
+    access_mgr = make_access_mgr()
+
+    with caplog.at_level(logging.DEBUG):
+        for i in range(1, 4):
+            msg = FakeMessage(
+                chat_id=chat_id,
+                message_id=100 + i,
+                url=f"https://instagram.com/p/always_ra_{i}",
+                date=fresh_date,
+                clock_func=fake_clock.time,
+            )
+            msg._reply_raises = RetryAfter(retry_after=40)
+            msg.always_raises = True
+            ctx = MagicMock()
+            ctx.user_data = {}
+            # Handler must never raise
+            await handle_url(make_update(msg), ctx, access_mgr, mock_queue)
+
+    await coord.flush(str(chat_id))
+
+    # 3 links -> 3 jobs submitted
+    assert len(jobs_submitted) == 3, f"Expected 3 jobs submitted, got {len(jobs_submitted)}"
+    # No tracebacks (ERROR or CRITICAL)
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(error_records) == 0, f"Expected no tracebacks/errors, got: {[r.message for r in error_records]}"
+    # Gate is open
+    assert coord.send_gate_open(str(chat_id))
+    # Burst stored with summary_msg = None
+    burst = _CHAT_BURSTS.get(str(chat_id))
+    assert burst is not None
+    assert burst["summary_msg"] is None
+    assert burst["count"] == 3
+

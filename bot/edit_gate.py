@@ -488,7 +488,11 @@ def request_edit(
     reply_markup: Any = None,
     terminal: bool = False,
 ) -> None:
-    """Request a message edit through the active EditCoordinator."""
+    """Request a message edit through the active EditCoordinator.
+    Safe no-op if message is None.
+    """
+    if message is None:
+        return
     get_edit_coordinator().request_edit(
         message=message,
         text=text,

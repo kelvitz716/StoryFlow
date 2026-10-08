@@ -39,6 +39,7 @@ _CHAT_BURSTS: dict = {}
 _LAST_BACKLOG_SUBMIT: dict = {}
 _BACKLOG_LOCKS: dict = {}
 _BACKLOG_JOBS: dict = {}
+_DEFERRED_SUMMARY_TASKS: dict = {}
 
 
 def _get_backlog_lock(chat_id: str) -> asyncio.Lock:
@@ -137,8 +138,52 @@ def record_backlog_job_failure(chat_id: str, url: str) -> None:
         request_edit(summary_msg, summary_text)
 
 
+async def _deferred_summary_sender(msg, chat_id: str) -> None:
+    """Deferred sender that posts the burst summary message once flood control clears."""
+    coord = get_edit_coordinator()
+    try:
+        while coord.send_gate_open(chat_id):
+            gate_until = coord._chat_gate_until.get(str(chat_id), 0)
+            wait_time = max(0.01, gate_until - coord.clock())
+            await coord.sleep_func(wait_time)
+
+        burst = _CHAT_BURSTS.get(chat_id)
+        if not burst or burst.get("summary_msg") is not None:
+            return
+
+        if burst.get("done", 0) > 0 or burst.get("failed", 0) > 0:
+            summary_text = _format_burst_summary(burst)
+        else:
+            n = burst.get("count", 1)
+            summary_text = f"Back online: processing {n} queued links"
+
+        try:
+            summary_msg = await msg.reply_text(summary_text)
+            burst["summary_msg"] = summary_msg
+        except RetryAfter as e:
+            coord.open_send_gate(chat_id, getattr(e, "retry_after", 1))
+            _launch_deferred_summary(msg, chat_id)
+        except Exception as e:
+            logging.debug(f"Deferred summary send failed: {e}")
+    except Exception as e:
+        logging.debug(f"Deferred summary worker error: {e}")
+
+
+def _launch_deferred_summary(msg, chat_id: str) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(_deferred_summary_sender(msg, chat_id))
+        _DEFERRED_SUMMARY_TASKS[chat_id] = task
+    except RuntimeError:
+        pass
+
+
 async def _register_backlog_link(msg, chat_id: str) -> None:
-    """Send or update a single summary message for a burst of backlog links."""
+    """Send or update a single summary message for a burst of backlog links.
+
+    Item 1: On RetryAfter, opens gate, stores burst with summary_msg=None,
+    and schedules deferred creation once the gate closes.
+    """
     now = get_edit_coordinator().clock()
     burst = _CHAT_BURSTS.get(chat_id)
     if burst and (now - burst["last_time"] <= 30.0):
@@ -149,10 +194,18 @@ async def _register_backlog_link(msg, chat_id: str) -> None:
             summary_text = _format_burst_summary(burst)
         else:
             summary_text = f"Back online: processing {n} queued links"
-        request_edit(burst["summary_msg"], summary_text)
+        if burst.get("summary_msg") is not None:
+            request_edit(burst["summary_msg"], summary_text)
     else:
         summary_text = "Back online: processing 1 queued links"
-        summary_msg = await msg.reply_text(summary_text)
+        summary_msg = None
+        coord = get_edit_coordinator()
+        try:
+            summary_msg = await msg.reply_text(summary_text)
+        except RetryAfter as e:
+            coord.open_send_gate(chat_id, getattr(e, "retry_after", 1))
+            _launch_deferred_summary(msg, chat_id)
+
         _CHAT_BURSTS[chat_id] = {
             "summary_msg": summary_msg,
             "count": 1,
