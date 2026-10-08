@@ -8,34 +8,20 @@ from telegram.error import RetryAfter, NetworkError, TimedOut
 
 import time
 
-LAST_EDIT_TIMES = {}
-EDIT_THROTTLE_SECONDS = 3.5
+from bot.edit_gate import request_edit
 
-async def safe_edit_text(message, text: str):
-    """Safely edit a message, throttling UI updates to avoid cascading rate limits."""
-    current_time = time.time()
-    msg_id = message.message_id
-    
-    # Lightweight Garbage Collection to prevent memory leaks
-    if len(LAST_EDIT_TIMES) > 100:
-        cutoff = current_time - 3600 # 1 hour
-        keys_to_delete = [k for k, v in LAST_EDIT_TIMES.items() if v < cutoff]
-        for k in keys_to_delete:
-            del LAST_EDIT_TIMES[k]
-    
-    # Throttle check
-    if msg_id in LAST_EDIT_TIMES:
-        if (current_time - LAST_EDIT_TIMES[msg_id]) < EDIT_THROTTLE_SECONDS:
-            return  # Skip update to protect API quotas
 
-    try:
-        await message.edit_text(text, parse_mode='Markdown')
-        LAST_EDIT_TIMES[msg_id] = time.time()
-    except RetryAfter as e:
-        logging.warning(f"🤫 Status update throttled by Telegram (waiting {e.retry_after}s), skipping.")
-        LAST_EDIT_TIMES[msg_id] = current_time + e.retry_after
-    except Exception as e:
-        logging.debug(f"ℹ️ Status update failed: {e}")
+async def safe_edit_text(
+    message,
+    text: str,
+    parse_mode: Optional[str] = 'Markdown',
+    reply_markup=None,
+    terminal: bool = False,
+):
+    """Safely edit a message, delegating to EditCoordinator for pacing and deduplication."""
+    if not message:
+        return
+    request_edit(message, text, parse_mode=parse_mode, reply_markup=reply_markup, terminal=terminal)
 
 async def batch_upload_media(update: Update, files: List[str], status_msg, mtproto_client=None) -> None:
     """
@@ -156,10 +142,12 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
     if failed_count > 0:
         await safe_edit_text(status_msg, 
             f"✅ Delivered {uploaded_count} files.\n"
-            f"⚠️ {failed_count} files failed to upload."
+            f"⚠️ {failed_count} files failed to upload.",
+            terminal=True,
         )
     else:
-        try:
-            await status_msg.delete()
-        except:
-            pass
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except:
+                pass

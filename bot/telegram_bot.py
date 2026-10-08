@@ -53,12 +53,19 @@ download_queue: Optional[DownloadQueue] = None
 
 # MTProto Auth State (Shared with handlers)
 
+from bot.edit_gate import request_edit
+
 # ============= UI UPDATES & CALLBACKS =============
 
 async def update_job_status(application: Application, job: DownloadJob):
     """Callback for queue status updates, using the application bot context."""
     status_msg = JOB_MESSAGES.get(job.job_id)
     if not status_msg:
+        if job.status == JobStatus.COMPLETED:
+            stats_manager.increment_download(job.user_id, job.platform)
+            pop_job_message(job.job_id)
+        elif job.status == JobStatus.FAILED:
+            pop_job_message(job.job_id)
         return
 
     try:
@@ -66,15 +73,22 @@ async def update_job_status(application: Application, job: DownloadJob):
         
         if job.status == JobStatus.QUEUED:
             pos = get_queue().get_queue_position(job.job_id)
-            await status_msg.edit_text(
+            request_edit(
+                status_msg,
                 f"⏳ *Queued* (Position: {pos})\nWaiting for available worker...", 
-                parse_mode='Markdown'
+                parse_mode='Markdown',
+                terminal=False
             )
             
         elif job.status == JobStatus.DOWNLOADING:
             # Escape the message for safe Markdown rendering
             msg = escape_markdown(job.message, version=1)
-            await status_msg.edit_text(f"⬇️ *Downloading...*\n{emoji} {msg}", parse_mode='Markdown')
+            request_edit(
+                status_msg,
+                f"⬇️ *Downloading...*\n{emoji} {msg}",
+                parse_mode='Markdown',
+                terminal=False
+            )
             
         elif job.status == JobStatus.UPLOADING:
             # Batch upload handles its own status updates
@@ -86,7 +100,12 @@ async def update_job_status(application: Application, job: DownloadJob):
                 
         elif job.status == JobStatus.FAILED:
             error_text = format_error_message(job.error or "Unknown failure", job.platform)
-            await status_msg.edit_text(error_text, parse_mode='Markdown')
+            request_edit(
+                status_msg,
+                error_text,
+                parse_mode='Markdown',
+                terminal=True
+            )
             pop_job_message(job.job_id)
                 
     except Exception as e:
