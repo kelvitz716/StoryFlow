@@ -373,6 +373,28 @@ def get_queue() -> DownloadQueue:
         download_queue = DownloadQueue()
     return download_queue
 
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    """
+    Read an integer from environment variable `name`, log a warning on empty or
+    non-numeric value, and clamp the resulting integer to [lo, hi].
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        val = default
+    elif not raw.strip():
+        logging.warning(f"Empty value for environment variable {name}, using default {default}")
+        val = default
+    else:
+        try:
+            val = int(raw.strip())
+        except (ValueError, TypeError):
+            logging.warning(
+                f"Non-numeric value {raw!r} for environment variable {name}, using default {default}"
+            )
+            val = default
+    return max(lo, min(hi, val))
+
+
 async def init_queue(
     snapchat_downloader,
     gallery_dl_downloader,
@@ -382,14 +404,14 @@ async def init_queue(
 ):
     global download_queue
 
-    # Read concurrency limits from env (item 9, item 5); clamp to sane ranges
+    # Read concurrency limits from env using _env_int
     if max_concurrent is None:
-        max_concurrent = max(1, min(10, int(os.getenv('MAX_CONCURRENT_JOBS', '2'))))
+        max_concurrent = _env_int('MAX_CONCURRENT_JOBS', 2, 1, 10)
     else:
         max_concurrent = max(1, min(10, max_concurrent))
 
     if max_per_user is None:
-        max_per_user = max(1, int(os.getenv('MAX_JOBS_PER_USER', '5')))
+        max_per_user = _env_int('MAX_JOBS_PER_USER', 5, 1, 100)
     else:
         max_per_user = max(1, max_per_user)
 

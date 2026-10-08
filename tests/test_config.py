@@ -155,3 +155,66 @@ class TestEnvExamplePacingVars:
         assert "BACKLOG_SUBMIT_DELAY_SECONDS=1.5" in content
 
 
+class TestEnvIntHelper:
+
+    def test_importable_from_storyflow_and_core(self):
+        """_env_int is exposed from both storyflow and core.queue."""
+        from storyflow import _env_int as fn1
+        from core.queue import _env_int as fn2
+        assert callable(fn1)
+        assert callable(fn2)
+
+    def test_invalid_string_logs_warning_and_uses_default(self, caplog):
+        """'invalid' logs warning and returns default (clamped)."""
+        from core.queue import _env_int
+        import logging
+        with patch.dict(os.environ, {"TEST_INT_VAR": "invalid"}):
+            with caplog.at_level(logging.WARNING):
+                val = _env_int("TEST_INT_VAR", default=5, lo=1, hi=10)
+                assert val == 5
+                assert any("TEST_INT_VAR" in r.message and "invalid" in r.message for r in caplog.records)
+
+    def test_empty_string_logs_warning_and_uses_default(self, caplog):
+        """Empty string logs warning and returns default (clamped)."""
+        from core.queue import _env_int
+        import logging
+        with patch.dict(os.environ, {"TEST_INT_VAR": "   "}):
+            with caplog.at_level(logging.WARNING):
+                val = _env_int("TEST_INT_VAR", default=5, lo=1, hi=10)
+                assert val == 5
+                assert any("Empty value" in r.message and "TEST_INT_VAR" in r.message for r in caplog.records)
+
+    def test_zero_clamped(self):
+        """'0' is parsed and clamped to lo."""
+        from core.queue import _env_int
+        with patch.dict(os.environ, {"TEST_INT_VAR": "0"}):
+            val = _env_int("TEST_INT_VAR", default=5, lo=1, hi=10)
+            assert val == 1
+
+    def test_negative_five_clamped(self):
+        """'-5' is parsed and clamped to lo."""
+        from core.queue import _env_int
+        with patch.dict(os.environ, {"TEST_INT_VAR": "-5"}):
+            val = _env_int("TEST_INT_VAR", default=5, lo=1, hi=10)
+            assert val == 1
+
+    def test_nine_nine_nine_clamped(self):
+        """'999' is parsed and clamped to hi."""
+        from core.queue import _env_int
+        with patch.dict(os.environ, {"TEST_INT_VAR": "999"}):
+            val = _env_int("TEST_INT_VAR", default=5, lo=1, hi=10)
+            assert val == 10
+
+    def test_valid_in_range_and_unset(self, caplog):
+        """Valid integer parses without warning; unset env var returns default without warning."""
+        from core.queue import _env_int
+        import logging
+        with caplog.at_level(logging.WARNING):
+            with patch.dict(os.environ, {"TEST_INT_VAR": "7"}):
+                assert _env_int("TEST_INT_VAR", default=5, lo=1, hi=10) == 7
+            with patch.dict(os.environ, {}, clear=True):
+                assert _env_int("TEST_INT_VAR", default=4, lo=1, hi=10) == 4
+        assert len(caplog.records) == 0
+
+
+

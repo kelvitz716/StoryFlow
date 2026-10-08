@@ -1,7 +1,7 @@
 # Core module for StoryFlow
 from .platform import identify_platform, extract_snapchat_username
 from .rate_limiter import RateLimiter
-from .queue import DownloadQueue, DownloadJob, JobStatus, get_queue, init_queue
+from .queue import DownloadQueue, DownloadJob, JobStatus, get_queue, init_queue, _env_int
 
 __all__ = [
     'identify_platform',
@@ -12,4 +12,5 @@ __all__ = [
     'JobStatus',
     'get_queue',
     'init_queue',
+    '_env_int',
 ]
