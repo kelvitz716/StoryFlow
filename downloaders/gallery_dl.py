@@ -112,7 +112,7 @@ class GalleryDLDownloader(BaseDownloader):
             return {
                 'success': False,
                 'error': 'Unexpected error',
-                'details': str(e),
+                'details': 'An unexpected error occurred during download',
                 'platform': platform
             }
     
@@ -207,7 +207,8 @@ class GalleryDLDownloader(BaseDownloader):
             logging.error(f"yt-dlp error: {e}")
             return {
                 'success': False,
-                'error': str(e),
+                'error': 'Download failed',
+                'details': 'An unexpected error occurred during media extraction',
                 'platform': platform
             }
     

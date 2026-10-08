@@ -316,7 +316,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
         else:
             await status_msg.edit_text(f"❌ Failed: {result.get('error')}")
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Error: {str(e)}")
+        logging.error(f"Error handling cookie file: {e}")
+        await status_msg.edit_text("⚠️ An error occurred while processing the cookie file.")
     finally:
         # Always clean up temp file, even on error
         if temp_path and os.path.exists(temp_path):
