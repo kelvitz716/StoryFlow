@@ -185,8 +185,7 @@ class GalleryDLDownloader(BaseDownloader):
             else:
                  return {
                     'success': False,
-                    'error': result.get('error') or f'Download failed for {platform}',
-                    'details': result.get('details', ''),
+                    'error': 'Download failed',
                     'platform': platform
                 }
                 
