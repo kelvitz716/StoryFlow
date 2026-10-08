@@ -11,6 +11,7 @@ import random
 from typing import Optional
 
 from telegram import Update, Document, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.error import RetryAfter, NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -272,6 +273,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # ============= INFRASTRUCTURE & BOOTSTRAP =============
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Application-level error handler (item 3).
+
+    Logs one concise line for RetryAfter / NetworkError / TimedOut errors so that
+    Termux does not receive five-line tracebacks per flood-control hit.  All other
+    exceptions get a full traceback so real bugs are not silently swallowed.
+    """
+    exc = context.error
+    if isinstance(exc, RetryAfter):
+        logging.warning(f"Telegram RetryAfter({exc.retry_after}s) — update skipped.")
+    elif isinstance(exc, (NetworkError, TimedOut)):
+        logging.warning(f"Telegram transient error ({type(exc).__name__}): {exc}")
+    else:
+        logging.exception(f"Unhandled exception in update handler: {exc}", exc_info=exc)
+
+
 def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     """Initialize and run the StoryFlow Telegram bot."""
     global snapchat, gallery_dl, cookie_manager, mtproto_client, access_manager
@@ -363,5 +380,8 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
         lambda u, c: handle_url(u, c, access_manager, download_queue, mtproto_client)
     ), group=1)
     
+    # Error handler (item 3)
+    app.add_error_handler(error_handler)
+
     logging.info("🤖 StoryFlow Bot started!")
     app.run_polling()
