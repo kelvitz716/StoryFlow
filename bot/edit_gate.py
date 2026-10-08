@@ -57,6 +57,8 @@ class EditCoordinator:
     - Injectable clock and sleep_func for fast deterministic testing.
     """
 
+    _LRU_MAX_ENTRIES: int = 2000
+
     def __init__(
         self,
         edit_min_interval: Optional[float] = None,
@@ -87,12 +89,12 @@ class EditCoordinator:
         self._chat_gate_until: Dict[str, float] = {}
         # chat_id -> timestamp of last edit sent
         self._last_chat_edit_time: Dict[str, float] = {}
-        # (chat_id, msg_id) -> timestamp of last edit sent
-        self._last_msg_edit_time: Dict[Tuple[str, int], float] = {}
-        # (chat_id, msg_id) -> (last_sent_text, last_sent_markup)
-        self._last_sent_content: Dict[Tuple[str, int], Tuple[str, Any]] = {}
-        # (chat_id, msg_id) set of messages that have had a terminal edit sent
-        self._terminal_sent: set = set()
+        # (chat_id, msg_id) -> timestamp of last edit sent (LRU bounded)
+        self._last_msg_edit_time: OrderedDict[Tuple[str, int], float] = OrderedDict()
+        # (chat_id, msg_id) -> (last_sent_text, last_sent_markup) (LRU bounded)
+        self._last_sent_content: OrderedDict[Tuple[str, int], Tuple[str, Any]] = OrderedDict()
+        # (chat_id, msg_id) -> True for messages with terminal edit sent (LRU bounded)
+        self._terminal_sent: OrderedDict[Tuple[str, int], bool] = OrderedDict()
 
     @staticmethod
     def _extract_chat_id(message: Any) -> Optional[str]:
@@ -114,6 +116,33 @@ class EditCoordinator:
         if hasattr(message, "id") and message.id is not None:
             return int(message.id)
         return id(message)
+
+    def _record_edit_success(
+        self,
+        chat_id: str,
+        ready_msg_key: Tuple[str, int],
+        text: str,
+        reply_markup: Any,
+        sent_time: float,
+        terminal: bool = False,
+    ) -> None:
+        self._last_sent_content[ready_msg_key] = (text, reply_markup)
+        self._last_sent_content.move_to_end(ready_msg_key)
+        while len(self._last_sent_content) > self._LRU_MAX_ENTRIES:
+            self._last_sent_content.popitem(last=False)
+
+        self._last_msg_edit_time[ready_msg_key] = sent_time
+        self._last_msg_edit_time.move_to_end(ready_msg_key)
+        while len(self._last_msg_edit_time) > self._LRU_MAX_ENTRIES:
+            self._last_msg_edit_time.popitem(last=False)
+
+        self._last_chat_edit_time[chat_id] = sent_time
+
+        if terminal:
+            self._terminal_sent[ready_msg_key] = True
+            self._terminal_sent.move_to_end(ready_msg_key)
+            while len(self._terminal_sent) > self._LRU_MAX_ENTRIES:
+                self._terminal_sent.popitem(last=False)
 
     def request_edit(
         self,
@@ -140,6 +169,7 @@ class EditCoordinator:
         # ignore later non-terminal edits for this message.
         if not terminal:
             if msg_key in self._terminal_sent:
+                self._terminal_sent.move_to_end(msg_key)
                 return
             if chat_id in self._pending_edits:
                 existing = self._pending_edits[chat_id].get(msg_id)
@@ -147,12 +177,13 @@ class EditCoordinator:
                     return
 
         # Check deduplication against last successfully sent content for this (chat_id, msg_id)
-        last_sent = self._last_sent_content.get(msg_key)
-        if last_sent == (text, reply_markup):
-            # If a pending edit exists that reverted to last_sent, remove it
-            if chat_id in self._pending_edits:
-                self._pending_edits[chat_id].pop(msg_id, None)
-            return
+        if msg_key in self._last_sent_content:
+            self._last_sent_content.move_to_end(msg_key)
+            if self._last_sent_content[msg_key] == (text, reply_markup):
+                # If a pending edit exists that reverted to last_sent, remove it
+                if chat_id in self._pending_edits:
+                    self._pending_edits[chat_id].pop(msg_id, None)
+                return
 
         if chat_id not in self._pending_edits:
             self._pending_edits[chat_id] = OrderedDict()
@@ -265,10 +296,11 @@ class EditCoordinator:
                 ready_msg_key = (chat_id, ready_msg_id)
 
                 # Deduplication check
-                last_sent = self._last_sent_content.get(ready_msg_key)
-                if last_sent == (req.text, req.reply_markup):
-                    pending.pop(ready_msg_id, None)
-                    continue
+                if ready_msg_key in self._last_sent_content:
+                    self._last_sent_content.move_to_end(ready_msg_key)
+                    if self._last_sent_content[ready_msg_key] == (req.text, req.reply_markup):
+                        pending.pop(ready_msg_id, None)
+                        continue
 
                 # Execute edit_text
                 try:
@@ -281,11 +313,14 @@ class EditCoordinator:
                     await req.message.edit_text(req.text, **kwargs)
 
                     sent_time = self.clock()
-                    self._last_sent_content[ready_msg_key] = (req.text, req.reply_markup)
-                    self._last_msg_edit_time[ready_msg_key] = sent_time
-                    self._last_chat_edit_time[chat_id] = sent_time
-                    if req.terminal:
-                        self._terminal_sent.add(ready_msg_key)
+                    self._record_edit_success(
+                        chat_id=chat_id,
+                        ready_msg_key=ready_msg_key,
+                        text=req.text,
+                        reply_markup=req.reply_markup,
+                        sent_time=sent_time,
+                        terminal=req.terminal,
+                    )
 
                     if pending.get(ready_msg_id) is req:
                         pending.pop(ready_msg_id, None)
@@ -326,11 +361,14 @@ class EditCoordinator:
 
                     if is_not_modified:
                         sent_time = self.clock()
-                        self._last_sent_content[ready_msg_key] = (req.text, req.reply_markup)
-                        self._last_msg_edit_time[ready_msg_key] = sent_time
-                        self._last_chat_edit_time[chat_id] = sent_time
-                        if req.terminal:
-                            self._terminal_sent.add(ready_msg_key)
+                        self._record_edit_success(
+                            chat_id=chat_id,
+                            ready_msg_key=ready_msg_key,
+                            text=req.text,
+                            reply_markup=req.reply_markup,
+                            sent_time=sent_time,
+                            terminal=req.terminal,
+                        )
                         if pending.get(ready_msg_id) is req:
                             pending.pop(ready_msg_id, None)
                         logging.debug(f"Message {ready_msg_id} not modified; treated as success.")

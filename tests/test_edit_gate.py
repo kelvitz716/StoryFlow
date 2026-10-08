@@ -274,3 +274,30 @@ async def test_terminal_sent_ignores_non_terminal_and_later_terminal_replaces():
     assert len(msg.calls) == 2
     assert msg.calls[1]["text"] == "Revised Done"
 
+
+@pytest.mark.asyncio
+async def test_lru_bounding_leaves_at_most_2000_entries():
+    """3000 messages processed through coordinator leaves <= 2000 entries in per-message state."""
+    fake_clock = FakeClock()
+    coord = EditCoordinator(
+        edit_min_interval=0.0,
+        msg_min_interval=0.0,
+        clock=fake_clock.time,
+        sleep_func=fake_clock.sleep,
+    )
+
+    for i in range(3000):
+        msg = FakeMessage(chat_id=i, message_id=1, clock_func=fake_clock.time)
+        coord.request_edit(msg, f"Text {i}")
+        await coord.flush(str(i))
+
+    assert len(coord._last_sent_content) <= 2000
+    assert len(coord._last_msg_edit_time) <= 2000
+    assert len(coord._last_sent_content) == 2000
+    assert len(coord._last_msg_edit_time) == 2000
+    # Oldest (e.g. chat "0") was evicted, newest (e.g. chat "2999") is retained
+    assert ("0", 1) not in coord._last_sent_content
+    assert ("0", 1) not in coord._last_msg_edit_time
+    assert ("2999", 1) in coord._last_sent_content
+    assert ("2999", 1) in coord._last_msg_edit_time
+
