@@ -142,3 +142,16 @@ class TestQueueEnvDefaults:
         q_neg = DownloadQueue(max_per_user=-3)
         assert q_neg.max_per_user == 1
 
+
+class TestEnvExamplePacingVars:
+
+    def test_env_example_has_pacing_and_backlog_vars(self):
+        """Verify .env.example defines EDIT_MIN_INTERVAL_SECONDS, BACKLOG_AGE_SECONDS, BACKLOG_SUBMIT_DELAY_SECONDS."""
+        with open(".env.example", "r") as f:
+            content = f.read()
+
+        assert "EDIT_MIN_INTERVAL_SECONDS=1.5" in content
+        assert "BACKLOG_AGE_SECONDS=60" in content
+        assert "BACKLOG_SUBMIT_DELAY_SECONDS=1.5" in content
+
+
