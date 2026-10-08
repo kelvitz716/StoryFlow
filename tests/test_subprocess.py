@@ -109,3 +109,66 @@ class TestLongStdoutLine:
             assert 'success' in result
         except asyncio.TimeoutError:
             pytest.fail("Job hung on long stdout line")
+
+
+# ---------------------------------------------------------------------------
+# Test (c): stdout flood for 3s — must not grow process RSS by >50 MB (item 1)
+# ---------------------------------------------------------------------------
+
+def _get_process_rss_mb() -> float:
+    """Read current VmRSS in MB from /proc/self/status."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except OSError:
+        pass
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+
+
+class TestStdoutFloodBoundedMemory:
+    """A child that floods stdout for 3s must not grow process RSS by more than ~50 MB."""
+
+    @pytest.mark.asyncio
+    async def test_stdout_flood_3s_rss_bounded(self):
+        """
+        Flood stdout continuously for 3.0 seconds.
+        Verify that:
+        1. Process finishes cleanly without OOM or hanging.
+        2. Result stdout stores at most 200 lines and at most 64 KB.
+        3. RSS growth does not exceed 50 MB.
+        """
+        import gc
+        gc.collect()
+        rss_before = _get_process_rss_mb()
+
+        cmd = _python_script_cmd(
+            "import sys, time",
+            "end = time.time() + 3.0",
+            "chunk = 'LINE ' + ('x' * 100) + '\\n'",
+            "while time.time() < end:",
+            "    sys.stdout.write(chunk)",
+            "sys.stdout.flush()",
+        )
+        dl = ConcreteDownloader(output_path="/tmp/test_dl_scratch")
+        result = await asyncio.wait_for(
+            dl._execute_with_retry(cmd, process_name="test_stdout_flood", max_attempts=1),
+            timeout=10,
+        )
+        assert result['success'] is True
+        stdout = result.get('stdout', '')
+        lines = stdout.splitlines()
+
+        # Must store at most 200 lines
+        assert len(lines) <= 200
+
+        # Must store at most 64 KB
+        assert len(stdout.encode('utf-8')) <= 65536
+
+        gc.collect()
+        rss_after = _get_process_rss_mb()
+        rss_growth_mb = rss_after - rss_before
+        assert rss_growth_mb < 50.0, f"RSS grew by {rss_growth_mb:.2f} MB, exceeding 50 MB limit"
+

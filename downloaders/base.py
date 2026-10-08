@@ -4,6 +4,7 @@ import os
 import signal
 import asyncio
 import logging
+from collections import deque
 from typing import Optional, Callable, Dict
 
 # Wall-clock timeout for every subprocess call (seconds).
@@ -11,6 +12,10 @@ _DOWNLOAD_TIMEOUT = int(os.getenv('DOWNLOAD_TIMEOUT_SECONDS', '600'))
 
 # Maximum stderr tail to keep in memory (bytes). Prevents OOM on a phone.
 _STDERR_TAIL_BYTES = 65_536  # 64 KB
+
+# Maximum stdout lines/bytes to keep in memory (item 1).
+_STDOUT_MAX_LINES = 200
+_STDOUT_MAX_BYTES = 65_536  # 64 KB
 
 # Pipe buffer size — 1 MB avoids ValueError on very long gallery-dl JSON lines.
 _PIPE_LIMIT = 1_048_576  # 1 MB
@@ -115,7 +120,8 @@ class BaseDownloader:
                 # Start concurrent stderr drain BEFORE reading stdout
                 stderr_task = asyncio.create_task(_drain_stderr(process.stderr))
 
-                stdout_lines = []
+                stdout_lines: deque[str] = deque(maxlen=_STDOUT_MAX_LINES)
+                stdout_bytes = 0
 
                 try:
                     async with asyncio.timeout(_DOWNLOAD_TIMEOUT):
@@ -133,8 +139,6 @@ class BaseDownloader:
 
                             line_text = line.decode(errors='replace').strip()
                             if line_text:
-                                stdout_lines.append(line_text)
-
                                 # Parse progress
                                 if progress_callback:
                                     # yt-dlp style: [download]  23.5% of ...
@@ -155,6 +159,20 @@ class BaseDownloader:
                                         pass
                                     elif "." in line_text and "/" in line_text:
                                         progress_callback("Fetching media files...")
+
+                                # Store at most the last 200 lines (or 64 KB)
+                                if len(line_text) > _STDOUT_MAX_BYTES:
+                                    line_text = line_text[-_STDOUT_MAX_BYTES:]
+
+                                if len(stdout_lines) == _STDOUT_MAX_LINES:
+                                    stdout_bytes -= len(stdout_lines[0])
+
+                                stdout_lines.append(line_text)
+                                stdout_bytes += len(line_text)
+
+                                while stdout_bytes > _STDOUT_MAX_BYTES and stdout_lines:
+                                    dropped = stdout_lines.popleft()
+                                    stdout_bytes -= len(dropped)
 
                         # Wait for process to finish, then collect stderr
                         await process.wait()
