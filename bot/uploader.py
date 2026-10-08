@@ -8,7 +8,7 @@ from telegram.error import RetryAfter, NetworkError, TimedOut
 
 import time
 
-from bot.edit_gate import request_edit
+from bot.edit_gate import request_edit, send_gate_open
 
 
 async def safe_edit_text(
@@ -98,6 +98,14 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
 
             try:
                 # Increased timeout values specifically for heavy video batch sizes
+                # Item 2: skip send if the chat gate is open (RetryAfter was received)
+                if send_gate_open(str(update.effective_chat.id)):
+                    logging.warning(
+                        f"Batch {batch_idx+1}: send gate open for chat "
+                        f"{update.effective_chat.id}; deferring reply_media_group."
+                    )
+                    await asyncio.sleep(1)
+                    continue
                 await update.effective_message.reply_media_group(
                     media=media_group,
                     read_timeout=120,
