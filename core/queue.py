@@ -392,7 +392,29 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
                 f"Non-numeric value {raw!r} for environment variable {name}, using default {default}"
             )
             val = default
-    return max(lo, min(hi, val))
+    return max(int(lo), min(int(hi), int(val)))
+
+
+def _env_float(name: str, default: float, lo: float, hi: float) -> float:
+    """
+    Read a float from environment variable `name`, log a warning on empty or
+    non-numeric value, and clamp the resulting float to [lo, hi].
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        val = default
+    elif not raw.strip():
+        logging.warning(f"Empty value for environment variable {name}, using default {default}")
+        val = default
+    else:
+        try:
+            val = float(raw.strip())
+        except (ValueError, TypeError):
+            logging.warning(
+                f"Non-numeric value {raw!r} for environment variable {name}, using default {default}"
+            )
+            val = default
+    return max(float(lo), min(float(hi), float(val)))
 
 
 async def init_queue(

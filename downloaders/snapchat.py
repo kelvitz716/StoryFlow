@@ -20,6 +20,7 @@ import requests
 from typing import Dict, List, Optional, Callable
 
 from core.rate_limiter import RateLimiter
+from core.queue import _env_int
 from core.storage import is_storage_critical
 from core.platform import extract_snapchat_username
 from core.security import sanitize_filename
@@ -59,7 +60,7 @@ class SnapchatDownloader(BaseDownloader):
         """
         super().__init__(output_path)
         self.rate_limiter = RateLimiter(
-            max_requests=int(os.getenv("MAX_REQUESTS_PER_MINUTE", 30))
+            max_requests=_env_int("MAX_REQUESTS_PER_MINUTE", 30, 1, 600)
         )
         self.session = requests.Session()
         self.session.headers.update(_HEADERS)

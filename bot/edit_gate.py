@@ -8,6 +8,7 @@ import logging
 from typing import Optional, Callable, Awaitable, Dict, Any, Tuple
 from collections import OrderedDict
 import asyncio
+from core.queue import _env_float
 
 try:
     from telegram.error import RetryAfter, BadRequest
@@ -68,12 +69,12 @@ class EditCoordinator:
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         if edit_min_interval is None:
-            self.edit_min_interval = float(os.getenv("EDIT_MIN_INTERVAL_SECONDS", "1.5"))
+            self.edit_min_interval = _env_float("EDIT_MIN_INTERVAL_SECONDS", 1.5, 0.0, 60.0)
         else:
             self.edit_min_interval = float(edit_min_interval)
 
         if msg_min_interval is None:
-            self.msg_min_interval = float(os.getenv("EDIT_MSG_MIN_INTERVAL_SECONDS", "3.5"))
+            self.msg_min_interval = _env_float("EDIT_MSG_MIN_INTERVAL_SECONDS", 3.5, 0.0, 60.0)
         else:
             self.msg_min_interval = float(msg_min_interval)
 

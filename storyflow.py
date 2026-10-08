@@ -13,7 +13,7 @@ import logging
 from dotenv import load_dotenv
 
 from core.platform import identify_platform, extract_snapchat_username
-from core.queue import _env_int
+from core.queue import _env_int, _env_float
 from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
 

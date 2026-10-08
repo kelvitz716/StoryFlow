@@ -6,9 +6,10 @@ import time
 import asyncio
 import logging
 from typing import Dict, Optional, Callable
+from core.queue import _env_int
 
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
-_MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '500'))
+_MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
 
 # Admin cookie fallback is opt-in (item 8).
 # Default is disabled to prevent inadvertently sharing admin credentials.

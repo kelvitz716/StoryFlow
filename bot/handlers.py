@@ -31,6 +31,7 @@ AUTH_TYPE = None
 AUTH_ADMIN_ID = None
 
 from bot.edit_gate import request_edit, get_edit_coordinator
+from core.queue import _env_float
 
 # Backlog mode tracking
 _CHAT_BURSTS: dict = {}
@@ -244,7 +245,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     chat_id = str(update.effective_chat.id)
 
     # Backlog detection: message older than BACKLOG_AGE_SECONDS (default 60s)
-    backlog_age_threshold = float(os.getenv("BACKLOG_AGE_SECONDS", "60"))
+    backlog_age_threshold = _env_float("BACKLOG_AGE_SECONDS", 60.0, 0.0, 86400.0)
     is_backlog = False
     if hasattr(msg, "date") and msg.date:
         if hasattr(msg.date, "timestamp"):
@@ -294,7 +295,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if is_backlog:
             async with _get_backlog_lock(chat_id):
                 await _register_backlog_link(msg, chat_id)
-                submit_delay = float(os.getenv("BACKLOG_SUBMIT_DELAY_SECONDS", "1.5"))
+                submit_delay = _env_float("BACKLOG_SUBMIT_DELAY_SECONDS", 1.5, 0.0, 60.0)
                 now = get_edit_coordinator().clock()
                 last_submit = _LAST_BACKLOG_SUBMIT.get(chat_id, 0.0)
                 delay_needed = submit_delay - (now - last_submit)

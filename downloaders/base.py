@@ -6,9 +6,10 @@ import asyncio
 import logging
 from collections import deque
 from typing import Optional, Callable, Dict
+from core.queue import _env_int
 
 # Wall-clock timeout for every subprocess call (seconds).
-_DOWNLOAD_TIMEOUT = int(os.getenv('DOWNLOAD_TIMEOUT_SECONDS', '600'))
+_DOWNLOAD_TIMEOUT = _env_int('DOWNLOAD_TIMEOUT_SECONDS', 600, 10, 86400)
 
 # Maximum stderr tail to keep in memory (bytes). Prevents OOM on a phone.
 _STDERR_TAIL_BYTES = 65_536  # 64 KB
