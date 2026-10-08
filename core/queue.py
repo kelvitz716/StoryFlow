@@ -79,8 +79,8 @@ class DownloadQueue:
         max_per_user: int = 20,
         status_callback: Optional[Callable] = None
     ):
-        self.max_concurrent = max_concurrent
-        self.max_per_user = max_per_user
+        self.max_concurrent = max(1, max_concurrent)
+        self.max_per_user = max(1, max_per_user)
         self.status_callback = status_callback
         self.download_path = os.getenv('DOWNLOAD_PATH', './downloads')
         
@@ -349,7 +349,7 @@ class DownloadQueue:
                                 shutil.rmtree(entry.path)
                         except: pass
             except asyncio.CancelledError: break
-            except Exception as e:
+            except Exception:
                 await asyncio.sleep(60)
 
     def _startup_sweep(self):
@@ -382,11 +382,16 @@ async def init_queue(
 ):
     global download_queue
 
-    # Read concurrency limits from env (item 9); clamp to sane ranges
+    # Read concurrency limits from env (item 9, item 5); clamp to sane ranges
     if max_concurrent is None:
         max_concurrent = max(1, min(10, int(os.getenv('MAX_CONCURRENT_JOBS', '2'))))
+    else:
+        max_concurrent = max(1, min(10, max_concurrent))
+
     if max_per_user is None:
-        max_per_user = int(os.getenv('MAX_JOBS_PER_USER', '5'))
+        max_per_user = max(1, int(os.getenv('MAX_JOBS_PER_USER', '5')))
+    else:
+        max_per_user = max(1, max_per_user)
 
     download_queue = DownloadQueue(
         max_concurrent=max_concurrent,

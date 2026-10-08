@@ -104,3 +104,41 @@ class TestQueueEnvDefaults:
                 await q_module.init_queue(None, None)
                 call_kwargs = mock_cls.call_args.kwargs
                 assert call_kwargs['max_concurrent'] == 1
+
+    @pytest.mark.asyncio
+    async def test_max_per_user_clamped_below_1_env(self):
+        """MAX_JOBS_PER_USER=0 or negative from env is clamped to 1."""
+        from core import queue as q_module
+
+        mock_queue = MagicMock()
+        mock_queue.start = AsyncMock()
+
+        for invalid_val in ('0', '-5'):
+            with patch.dict(os.environ, {'MAX_JOBS_PER_USER': invalid_val}):
+                with patch.object(q_module, 'DownloadQueue', return_value=mock_queue) as mock_cls:
+                    await q_module.init_queue(None, None)
+                    call_kwargs = mock_cls.call_args.kwargs
+                    assert call_kwargs['max_per_user'] == 1
+
+    @pytest.mark.asyncio
+    async def test_max_per_user_clamped_below_1_param(self):
+        """init_queue(max_per_user=0) or negative is clamped to 1."""
+        from core import queue as q_module
+
+        mock_queue = MagicMock()
+        mock_queue.start = AsyncMock()
+
+        for invalid_val in (0, -10):
+            with patch.object(q_module, 'DownloadQueue', return_value=mock_queue) as mock_cls:
+                await q_module.init_queue(None, None, max_per_user=invalid_val)
+                call_kwargs = mock_cls.call_args.kwargs
+                assert call_kwargs['max_per_user'] == 1
+
+    def test_download_queue_direct_init_clamped(self):
+        """Direct DownloadQueue(max_per_user=0) is clamped to at least 1."""
+        from core.queue import DownloadQueue
+        q = DownloadQueue(max_per_user=0)
+        assert q.max_per_user == 1
+        q_neg = DownloadQueue(max_per_user=-3)
+        assert q_neg.max_per_user == 1
+
