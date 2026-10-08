@@ -31,9 +31,12 @@ echo "[3/4] Installing Python dependencies..."
 pip install --upgrade pip wheel
 
 # TgCrypto requires a C compiler and may fail on some Termux builds.
-# We install it separately so a build failure doesn't abort the rest.
-echo "  Installing core requirements..."
-pip install -r "$REPO_DIR/requirements.txt" --ignore-installed TgCrypto || true
+# Install core requirements with TgCrypto filtered out; fail loudly if it fails.
+echo "  Installing core requirements (excluding TgCrypto)..."
+REQ_TMP=$(mktemp)
+grep -viE '^tgcrypto' "$REPO_DIR/requirements.txt" > "$REQ_TMP"
+pip install -r "$REQ_TMP"
+rm -f "$REQ_TMP"
 
 echo "  Attempting TgCrypto install (optional — needed for MTProto large-file uploads)..."
 pip install TgCrypto && echo "  TgCrypto installed OK." \
