@@ -197,8 +197,8 @@ async def test_message_not_modified_no_error_log(caplog):
 
     error_logs = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(error_logs) == 0
-    # Content recorded as last sent
-    assert coord._last_sent_content.get(1) == ("Same text", None)
+    # Content recorded as last sent keyed by (chat_id, msg_id)
+    assert coord._last_sent_content.get(("505", 1)) == ("Same text", None)
 
 
 @pytest.mark.asyncio
@@ -207,3 +207,24 @@ async def test_none_message_safety():
     fake_clock = FakeClock()
     coord = EditCoordinator(clock=fake_clock.time, sleep_func=fake_clock.sleep)
     coord.request_edit(None, "Text")  # Must not crash
+
+
+@pytest.mark.asyncio
+async def test_same_message_id_in_two_chats_both_delivered():
+    """Same message_id in two chats with identical text -> both edits delivered."""
+    fake_clock = FakeClock()
+    coord = EditCoordinator(clock=fake_clock.time, sleep_func=fake_clock.sleep)
+
+    msg1 = FakeMessage(chat_id=101, message_id=42, clock_func=fake_clock.time)
+    msg2 = FakeMessage(chat_id=202, message_id=42, clock_func=fake_clock.time)
+
+    coord.request_edit(msg1, "Identical text")
+    coord.request_edit(msg2, "Identical text")
+
+    await coord.flush("101")
+    await coord.flush("202")
+
+    assert len(msg1.calls) == 1
+    assert msg1.calls[0]["text"] == "Identical text"
+    assert len(msg2.calls) == 1
+    assert msg2.calls[0]["text"] == "Identical text"
