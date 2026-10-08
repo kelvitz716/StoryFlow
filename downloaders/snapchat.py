@@ -215,11 +215,11 @@ class SnapchatDownloader(BaseDownloader):
 
         except requests.exceptions.RequestException as e:
             logging.error(f"❌ Network error: {e}")
-            return {"success": False, "error": "Network error", "details": str(e), "platform": "Snapchat"}
+            return {"success": False, "error": "Network error", "details": "Failed to connect to Snapchat service", "platform": "Snapchat"}
 
         except Exception as e:
             logging.error(f"❌ Unexpected error: {e}")
-            return {"success": False, "error": "Unexpected error", "details": str(e), "platform": "Snapchat"}
+            return {"success": False, "error": "Unexpected error", "details": "An unexpected error occurred while processing Snapchat content", "platform": "Snapchat"}
 
     # ------------------------------------------------------------------
     # Scraping helpers
