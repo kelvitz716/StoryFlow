@@ -99,7 +99,7 @@ StoryFlow is a unified media downloader for social media content. It supports Sn
 1. **Bot Token**: Set `TELEGRAM_BOT_TOKEN` in `.env`.
 2. **MTProto Session** (optional): Set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `TELEGRAM_SESSION_STRING`. Generate the session string with `python scripts/generate_session.py`.
 3. **Cookies**: Users upload `cookies.txt` (Netscape format) via `/manage_cookies`. Files are size-checked (≤256 KB) and extension-checked (`.txt`) before `get_file()` is ever called.
-4. **Apify API Token**: Required for Snapchat story downloads. Set `APIFY_TOKEN` in `.env`. Free tier: $5/month at [apify.com](https://apify.com).
+4. **Snapchat**: Handled via direct scraping of `story.snapchat.com` and yt-dlp. No external tokens or cloud services required.
 
 ---
 
@@ -113,11 +113,12 @@ See `.env.example` for the full annotated list. Key variables added by the harde
 | `MAX_FILE_SIZE_MB` | `500` | Reject files larger than this (gallery-dl + yt-dlp) |
 | `DOWNLOAD_TIMEOUT_SECONDS` | `600` | Wall-clock timeout per subprocess |
 | `ALLOW_ADMIN_COOKIE_FALLBACK` | `false` | Share admin cookies with all users (opt-in) |
+| `MAX_REQUESTS_PER_MINUTE` | `30` | Rate limit for direct Snapchat scraping |
 
 ---
 
 ## Current Status & Known Limitations
-- **Snapchat Stories / Highlights / Spotlight**: Handled via direct scraper; Apify is no longer required but the token is still read if present.
+- **Snapchat Stories / Highlights / Spotlight**: Handled via direct scraper + yt-dlp; zero external cloud services or tokens required.
 - **Instagram**: Sensitive to rate limits. Always use fresh cookies.
 - **MTProto on Termux**: TgCrypto may fail to build; the bot continues without it (files ≤50 MB only).
 - **Disk Space**: Use `/purge` (admin only) to clear `downloads/` if space is low.
