@@ -151,6 +151,7 @@ class TestEnvExamplePacingVars:
             content = f.read()
 
         assert "EDIT_MIN_INTERVAL_SECONDS=1.5" in content
+        assert "EDIT_MSG_MIN_INTERVAL_SECONDS=3.5" in content
         assert "BACKLOG_AGE_SECONDS=60" in content
         assert "BACKLOG_SUBMIT_DELAY_SECONDS=1.5" in content
 
