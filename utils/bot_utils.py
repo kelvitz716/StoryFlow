@@ -21,6 +21,8 @@ def _sweep_job_messages():
 
 def register_job_message(job_id: str, message):
     """Register a status message for a job with TTL tracking."""
+    if message is None:
+        return
     if len(JOB_MESSAGES) > 200:
         _sweep_job_messages()
     JOB_MESSAGES[job_id] = message

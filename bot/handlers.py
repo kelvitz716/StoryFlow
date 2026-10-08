@@ -30,6 +30,39 @@ AUTH_PENDING = None
 AUTH_TYPE = None
 AUTH_ADMIN_ID = None
 
+from bot.edit_gate import request_edit, get_edit_coordinator
+
+# Backlog mode tracking
+_CHAT_BURSTS: dict = {}
+_LAST_BACKLOG_SUBMIT: dict = {}
+_BACKLOG_LOCKS: dict = {}
+
+
+def _get_backlog_lock(chat_id: str) -> asyncio.Lock:
+    if chat_id not in _BACKLOG_LOCKS:
+        _BACKLOG_LOCKS[chat_id] = asyncio.Lock()
+    return _BACKLOG_LOCKS[chat_id]
+
+
+async def _register_backlog_link(msg, chat_id: str) -> None:
+    """Send or update a single summary message for a burst of backlog links."""
+    now = get_edit_coordinator().clock()
+    burst = _CHAT_BURSTS.get(chat_id)
+    if burst and (now - burst["last_time"] <= 30.0):
+        burst["count"] += 1
+        burst["last_time"] = now
+        n = burst["count"]
+        summary_text = f"Back online: processing {n} queued links"
+        request_edit(burst["summary_msg"], summary_text, parse_mode='Markdown')
+    else:
+        summary_text = "Back online: processing 1 queued links"
+        summary_msg = await msg.reply_text(summary_text, parse_mode='Markdown')
+        _CHAT_BURSTS[chat_id] = {
+            "summary_msg": summary_msg,
+            "count": 1,
+            "last_time": now,
+        }
+
 
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE, 
@@ -119,6 +152,23 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await msg.reply_text("⚠️ You can only queue up to 10 links at a time. Processing the first 10...")
         urls = urls[:10]
 
+    chat_id = str(update.effective_chat.id)
+
+    # Backlog detection: message older than BACKLOG_AGE_SECONDS (default 60s)
+    backlog_age_threshold = float(os.getenv("BACKLOG_AGE_SECONDS", "60"))
+    is_backlog = False
+    if hasattr(msg, "date") and msg.date:
+        if hasattr(msg.date, "timestamp"):
+            msg_ts = msg.date.timestamp()
+        elif isinstance(msg.date, (int, float)):
+            msg_ts = float(msg.date)
+        else:
+            msg_ts = None
+        if msg_ts is not None:
+            now_clock = get_edit_coordinator().clock()
+            if (now_clock - msg_ts) > backlog_age_threshold:
+                is_backlog = True
+
     for raw_url in urls:
         # Resolve any shortlinks first; fails closed on unsafe hops
         try:
@@ -142,33 +192,66 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             continue
         
         # Process download
-        proc_msg = random.choice(PROCESSING_MSGS)
-        status_msg = await msg.reply_text(f"{proc_msg}")
+        status_msg = None
+        if not is_backlog:
+            proc_msg = random.choice(PROCESSING_MSGS)
+            status_msg = await msg.reply_text(f"{proc_msg}")
         
         def make_upload_func(sm):
             async def upload_func(files):
                 await batch_upload_media(update, files, sm, mtproto_client)
             return upload_func
 
-        if download_queue:
-            job = await download_queue.submit(
-                user_id=user_id,
-                url=url,
-                platform=platform,
-                upload_func=make_upload_func(status_msg),
-                chat_id=str(update.effective_chat.id),
-                message_id=msg.message_id
-            )
-            
-            if job:
-                register_job_message(job.job_id, status_msg)
-                pos = download_queue.get_queue_position(job.job_id)
-                if pos > 0:
-                     await status_msg.edit_text(f"⏳ *Queued* (Position: {pos})\\nWaiting for worker...", parse_mode='Markdown')
-            else:
-                await status_msg.edit_text("⚠️ *Queue Full*\\nPlease wait for your active downloads to finish.")
+        if is_backlog:
+            async with _get_backlog_lock(chat_id):
+                await _register_backlog_link(msg, chat_id)
+                submit_delay = float(os.getenv("BACKLOG_SUBMIT_DELAY_SECONDS", "1.5"))
+                now = get_edit_coordinator().clock()
+                last_submit = _LAST_BACKLOG_SUBMIT.get(chat_id, 0.0)
+                delay_needed = submit_delay - (now - last_submit)
+                if delay_needed > 0:
+                    await get_edit_coordinator().sleep_func(delay_needed)
+                _LAST_BACKLOG_SUBMIT[chat_id] = get_edit_coordinator().clock()
+
+                if download_queue:
+                    job = await download_queue.submit(
+                        user_id=user_id,
+                        url=url,
+                        platform=platform,
+                        upload_func=make_upload_func(status_msg),
+                        chat_id=chat_id,
+                        message_id=msg.message_id
+                    )
+                    if not job:
+                        await msg.reply_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
+                else:
+                    await msg.reply_text("⚠️ System Error: Queue not active.")
         else:
-            await status_msg.edit_text("⚠️ System Error: Queue not active.")
+            if download_queue:
+                job = await download_queue.submit(
+                    user_id=user_id,
+                    url=url,
+                    platform=platform,
+                    upload_func=make_upload_func(status_msg),
+                    chat_id=chat_id,
+                    message_id=msg.message_id
+                )
+                if job:
+                    if status_msg:
+                        register_job_message(job.job_id, status_msg)
+                        pos = download_queue.get_queue_position(job.job_id)
+                        if pos > 0:
+                            request_edit(status_msg, f"⏳ *Queued* (Position: {pos})\nWaiting for worker...", parse_mode='Markdown')
+                else:
+                    if status_msg:
+                        request_edit(status_msg, "⚠️ *Queue Full*\nPlease wait for your active downloads to finish.", terminal=True)
+                    else:
+                        await msg.reply_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
+            else:
+                if status_msg:
+                    request_edit(status_msg, "⚠️ System Error: Queue not active.", terminal=True)
+                else:
+                    await msg.reply_text("⚠️ System Error: Queue not active.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
     if not await require_allowed(update, access_manager):
