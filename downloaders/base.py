@@ -226,16 +226,13 @@ class BaseDownloader:
 
                 logging.warning(f"⚠️ Attempt {attempt}/{max_attempts} failed for {process_name}: {error_msg}")
                 # Check if it's an authentication / login required error
-                # Note: gallery-dl exit code 4 is HttpError (401 Unauthorized / 403 Forbidden / Login redirect)
+                # gallery-dl: only exit code 16 (AuthRequired/AuthenticationError/AuthorizationError)
+                stderr_lower = stderr_text.lower()
                 is_auth_error = (
-                    returncode == 4
-                    or 'login' in stderr_text.lower()
-                    or 'authentication' in stderr_text.lower()
-                    or 'cookie' in stderr_text.lower()
-                    or 'sign in' in stderr_text.lower()
-                    or 'unauthorized' in stderr_text.lower()
-                    or 'forbidden' in stderr_text.lower()
-                    or 'redirect' in stderr_text.lower()
+                    returncode == 16
+                    or 'login required' in stderr_lower
+                    or '401' in stderr_lower
+                    or 'sign in to confirm' in stderr_lower
                 )
                 if is_auth_error:
                     return {
