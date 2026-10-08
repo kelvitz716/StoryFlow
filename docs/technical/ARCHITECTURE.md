@@ -18,8 +18,8 @@ graph TD
     SnapDL & GalleryDL -->|Inherits| BaseDL[BaseDownloader]
     GalleryDL -->|Fallback| YTDLP[yt-dlp Wrapper]
 
-    SnapDL -->|HTTP POST| Apify[Apify Cloud Actor]
-    Apify -->|JSON dataset| SnapDL
+    SnapDL -->|HTTP GET| SnapWeb[story.snapchat.com Scraper]
+    SnapWeb -->|JSON __NEXT_DATA__| SnapDL
     
     Worker -->|Success/Files| Uploader[bot/uploader.py]
     Uploader -->|Small Files <50MB| TelegramAPI[Telegram Bot API]
@@ -45,9 +45,9 @@ Modularized for high-performance interaction and maintainability.
 ### 3. Downloaders (`downloaders/`)
 - **BaseDownloader**: Abstract class consolidating shared execution logic, directory preparation, and error tracking.
 - **Job Isolation**: Every download job creates a unique subdirectory `downloads/{job_id}/` to prevent media leakage.
-- **Snapchat** (`snapchat.py`): Calls **two** Apify actors per request and merges results:
-  - `igview-owner/snapchat-story-viewer` → active 24h stories
-  - `crawlerbros/snapchat-user-stories-scraper` → saved highlight albums
+- **Snapchat** (`snapchat.py`): Scrapes public story.snapchat.com pages directly:
+  - Active 24h stories via embedded `__NEXT_DATA__`
+  - Saved highlight albums
   - Results are deduplicated by `mediaUrl` before downloading.
   - `/spotlight/` URLs are **not handled here** — `queue.py` detects them and routes directly to `gallery-dl` / `yt-dlp` (`SnapchatSpotlight` extractor).
 - **Gallery-DL** (`gallery_dl.py`): Wrapper around the `gallery-dl` CLI tool. Handles Instagram, TikTok, Facebook, Twitter/X, and Snapchat Spotlight. Inherits from `BaseDownloader`.

@@ -54,7 +54,6 @@ TELEGRAM_PHONE_NUMBER=+1234567890     # Phone number linked to your Telegram acc
 # Generate it once locally: python scripts/generate_session.py
 TELEGRAM_SESSION_STRING=
 
-APIFY_TOKEN=your_apify_token          # From https://console.apify.com/settings/integrations
 MODE=telegram
 ```
 

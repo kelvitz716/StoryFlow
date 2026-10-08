@@ -36,9 +36,8 @@ pip install python-telegram-bot
 Create a `.env` file:
 
 ```env
-# Snapchat via Apify (crawlerbros/snapchat-user-stories-scraper)
-# Get token at: https://console.apify.com/settings/integrations
-APIF_TOKEN=apify_api_xxxxxxxxxxxxxxxxxxxx
+# Rate limit for Snapchat scraping
+MAX_REQUESTS_PER_MINUTE=30
 
 # Download Configuration
 DOWNLOAD_PATH=./downloads
@@ -211,67 +210,26 @@ def create_retry_decorator(max_attempts=3, initial_wait=2, max_wait=60):
 
 ## 5. Snapchat Download Handler
 
-### 5.1 Dual Apify Actor Integration
+### 5.1 Direct Web Scraping Integration
 
-Snapchat content is split across two Apify actors. Both are called for every profile URL; results are merged and deduplicated by `mediaUrl` before any files are downloaded.
+Snapchat content is fetched via direct scraping of public `story.snapchat.com` web pages. Active stories and highlights are extracted from embedded `__NEXT_DATA__` JSON, merged, and deduplicated by `mediaUrl`. Spotlight URLs are handled via yt-dlp.
 
-| Content Type | Actor | Notes |
+| Content Type | Handler | Notes |
 |---|---|---|
-| **Stories** (active 24h) | `igview-owner/snapchat-story-viewer` | Handles public creator profiles |
-| **Highlights** (saved albums) | `crawlerbros/snapchat-user-stories-scraper` | Returns `storyTitle`, `highlightId`, rich metadata |
-| **Spotlight** (`/spotlight/` URL) | **Not via Apify** — routed by `queue.py` to `yt-dlp` (`SnapchatSpotlight` extractor) | No Apify cost |
-
-**Endpoint (both actors):** `https://api.apify.com/v2/acts/<actor>/run-sync-get-dataset-items`  
-**Pricing:** Stories actor = $5.00/1,000 results · Highlights actor = $1.00/1,000 results  
-**Free tier:** $5/month covers typical personal bot usage
+| **Stories** (active 24h) | Direct scraper (`story.snapchat.com`) | Extracted from `story.snapList` |
+| **Highlights** (saved albums) | Direct scraper (`story.snapchat.com`) | Extracted from `curatedHighlights[*].snapList` |
+| **Spotlight** (`/spotlight/` URL) | `yt-dlp` (`SnapchatSpotlight` extractor) | Direct extraction |
 
 ```python
 class SnapchatDownloader(BaseDownloader):
-    """Fetches stories + highlights via two Apify actors; merges results."""
+    """Fetches stories + highlights via direct web scraping; merges results."""
 
-    def __init__(self, apify_token: str, output_path: str = './downloads'):
+    def __init__(self, output_path: str = './downloads'):
         super().__init__(output_path)
-        self.apify_token = apify_token
-
-    def download_stories(self, username: str, job_id: str = None) -> Dict:
-        """Fetch from both actors, merge+deduplicate, then download files."""
-        stories    = self._fetch_actor(_ACTOR_STORIES,    username, 'stories')
-        highlights = self._fetch_actor(_ACTOR_HIGHLIGHTS, username, 'highlights')
-        all_items  = self._merge(stories, highlights)   # deduplicated by mediaUrl
-        # ... download each item ...
-
-    def _fetch_actor(self, actor_id, username, label) -> List[Dict]:
-        """Call one actor; return [] on any failure so the other still works."""
-        resp = self.session.post(
-            f'https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items',
-            params={'token': self.apify_token},
-            json={'usernames': [username], 'maxSnapsPerUser': 50},
-            timeout=120,
+        self.rate_limiter = RateLimiter(
+            max_requests=int(os.getenv("MAX_REQUESTS_PER_MINUTE", 30))
         )
-        resp.raise_for_status()
-        return self._normalise(resp.json())
-
-    def _merge(self, stories, highlights) -> List[Dict]:
-        """Merge two lists, deduplicating by mediaUrl."""
-        seen, merged = set(), []
-        for item in stories + highlights:
-            url = item.get('mediaUrl', '')
-            if url and url not in seen:
-                seen.add(url)
-                merged.append(item)
-        return merged
 ```
-
-**Resilience:** if one actor fails (4xx, timeout), the other actor's results are still returned — users always get partial content rather than a full failure.
-
-**Error handling:**
-
-| HTTP Status | Meaning | Bot Response |
-|---|---|---|
-| `200` | Success | Media downloaded |
-| `402` | Apify quota exhausted | User-friendly quota message |
-| `429` | Rate limited | Retry hint message |
-| `5xx` | Apify actor error | Generic network error message |
 
 ---
 
@@ -419,7 +377,7 @@ def main_cli():
     
     # Initialize components
     snapchat = SnapchatDownloader(
-        apify_token=os.getenv('APIFY_TOKEN', ''),
+        output_path=os.getenv('DOWNLOAD_PATH', './downloads'),
     )
     
     gallery_dl = GalleryDLDownloader(

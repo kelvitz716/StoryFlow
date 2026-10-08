@@ -1,7 +1,7 @@
 """Snapchat downloader via story.snapchat.com web scraping.
 
-Scrapes __NEXT_DATA__ JSON embedded in the Snapchat story page — no Apify or
-API key required.
+Scrapes __NEXT_DATA__ JSON embedded in the Snapchat story page.
+Zero external API accounts or tokens required.
 
 Content-type coverage:
   - Stories (active 24h)  → story.snapList
@@ -52,14 +52,12 @@ class SnapchatDownloader(BaseDownloader):
     Zero external API accounts or tokens required.
     """
 
-    def __init__(self, apify_token: str = "", output_path: str = "./downloads"):
+    def __init__(self, output_path: str = "./downloads"):
         """
         Args:
-            apify_token: Ignored — kept for API compatibility with existing bot init.
             output_path: Directory to save downloaded media.
         """
         super().__init__(output_path)
-        # apify_token intentionally unused; kept so telegram_bot.py needs zero changes
         self.rate_limiter = RateLimiter(
             max_requests=int(os.getenv("MAX_REQUESTS_PER_MINUTE", 30))
         )

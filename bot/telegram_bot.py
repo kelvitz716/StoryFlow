@@ -250,7 +250,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # ============= INFRASTRUCTURE & BOOTSTRAP =============
 
-def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_token: str) -> None:
+def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     """Initialize and run the StoryFlow Telegram bot."""
     global snapchat, gallery_dl, cookie_manager, mtproto_client, access_manager
 
@@ -271,7 +271,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str, apify_tok
     cookie_manager = CookieManager(cookie_path=cookie_path)
     
     # Initialize Downloaders
-    snapchat = SnapchatDownloader(apify_token=apify_token, output_path=download_path)
+    snapchat = SnapchatDownloader(output_path=download_path)
     gallery_dl = GalleryDLDownloader(output_path=download_path, cookie_path=cookie_path, admin_id=admin_id)
     
     app = Application.builder().token(token).read_timeout(60).write_timeout(60).build()
