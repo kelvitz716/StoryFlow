@@ -17,7 +17,7 @@ import json
 import logging
 import asyncio
 import requests
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 from core.rate_limiter import RateLimiter
 from core.storage import is_storage_critical
