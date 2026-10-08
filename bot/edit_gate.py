@@ -55,6 +55,7 @@ class EditCoordinator:
     - Per-message pacing: non-terminal edits are spaced at least 3.5s apart per message.
     - RetryAfter(n): opens a per-chat gate until now + n + 1. Terminal edits are never dropped and flush when the gate opens.
     - BadRequest "Message is not modified" is treated as success without error logging.
+    - send_gate_open(chat_id): returns True while a RetryAfter gate is active.
     - Injectable clock and sleep_func for fast deterministic testing.
     """
 
@@ -96,6 +97,32 @@ class EditCoordinator:
         self._last_sent_content: OrderedDict[Tuple[str, int], Tuple[str, Any]] = OrderedDict()
         # (chat_id, msg_id) -> True for messages with terminal edit sent (LRU bounded)
         self._terminal_sent: OrderedDict[Tuple[str, int], bool] = OrderedDict()
+
+    def send_gate_open(self, chat_id: str) -> bool:
+        """Return True if a RetryAfter gate is currently active for this chat (item 2).
+
+        The uploader calls this before reply_media_group / reply_text to skip
+        per-message sends while the chat is flood-gated.
+        """
+        gate_until = self._chat_gate_until.get(str(chat_id), 0)
+        return self.clock() < gate_until
+
+    def open_send_gate(self, chat_id: str, retry_after: float) -> None:
+        """Open (or extend) the chat gate for retry_after + 1 seconds (item 1).
+
+        Called by handle_url when reply_text itself raises RetryAfter so that
+        subsequent fresh messages in that chat are handled in degraded/backlog mode.
+        """
+        chat_id = str(chat_id)
+        gate_until = self.clock() + retry_after + 1
+        self._chat_gate_until[chat_id] = max(
+            self._chat_gate_until.get(chat_id, 0),
+            gate_until,
+        )
+        logging.warning(
+            f"handle_url RetryAfter({retry_after}s) for chat {chat_id}. "
+            f"Send gate open until {gate_until}."
+        )
 
     @staticmethod
     def _extract_chat_id(message: Any) -> Optional[str]:
@@ -428,3 +455,8 @@ def request_edit(
         reply_markup=reply_markup,
         terminal=terminal,
     )
+
+
+def send_gate_open(chat_id: str) -> bool:
+    """Return True if the send gate is open for *chat_id* (item 2)."""
+    return get_edit_coordinator().send_gate_open(str(chat_id))

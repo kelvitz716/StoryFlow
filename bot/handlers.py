@@ -6,6 +6,7 @@ import tempfile
 import re
 from typing import Optional
 from telegram import Update, Document
+from telegram.error import RetryAfter
 from telegram.ext import ContextTypes, Application
 
 from core.platform import identify_platform
@@ -30,7 +31,7 @@ AUTH_PENDING = None
 AUTH_TYPE = None
 AUTH_ADMIN_ID = None
 
-from bot.edit_gate import request_edit, get_edit_coordinator
+from bot.edit_gate import request_edit, get_edit_coordinator, send_gate_open
 from core.queue import _env_float
 
 # Backlog mode tracking
@@ -44,6 +45,14 @@ def _get_backlog_lock(chat_id: str) -> asyncio.Lock:
     if chat_id not in _BACKLOG_LOCKS:
         _BACKLOG_LOCKS[chat_id] = asyncio.Lock()
     return _BACKLOG_LOCKS[chat_id]
+
+
+async def _safe_reply(msg, text: str, parse_mode: str = None, **kwargs) -> None:
+    """Send a reply_text, silently swallowing RetryAfter (gate is already open)."""
+    try:
+        await msg.reply_text(text, parse_mode=parse_mode, **kwargs)
+    except RetryAfter:
+        pass
 
 
 def _format_burst_summary(burst: dict) -> str:
@@ -283,9 +292,21 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         
         # Process download
         status_msg = None
+        coord = get_edit_coordinator()
+        # A chat gate open means the acknowledgement message already failed with RetryAfter;
+        # treat every subsequent link in that chat as backlog (degraded mode) until the gate closes.
+        if not is_backlog and coord.send_gate_open(chat_id):
+            is_backlog = True
+
         if not is_backlog:
             proc_msg = random.choice(PROCESSING_MSGS)
-            status_msg = await msg.reply_text(f"{proc_msg}")
+            try:
+                status_msg = await msg.reply_text(f"{proc_msg}")
+            except RetryAfter as _e:
+                # Acknowledgement failed: open the chat gate and fall through as backlog
+                coord.open_send_gate(chat_id, getattr(_e, "retry_after", 1))
+                is_backlog = True
+                status_msg = None
         
         def make_upload_func(sm):
             async def upload_func(files):
@@ -316,10 +337,10 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                         register_backlog_job(job.job_id, chat_id, url)
                     else:
                         record_backlog_job_failure(chat_id, url)
-                        await msg.reply_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
+                        await _safe_reply(msg, "⚠️ *Queue Full*\nPlease wait for your active downloads to finish.", parse_mode='Markdown')
                 else:
                     record_backlog_job_failure(chat_id, url)
-                    await msg.reply_text("⚠️ System Error: Queue not active.")
+                    await _safe_reply(msg, "⚠️ System Error: Queue not active.")
         else:
             if download_queue:
                 job = await download_queue.submit(
@@ -340,12 +361,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     if status_msg:
                         request_edit(status_msg, "⚠️ *Queue Full*\nPlease wait for your active downloads to finish.", terminal=True)
                     else:
-                        await msg.reply_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
+                        await _safe_reply(msg, "⚠️ *Queue Full*\nPlease wait for your active downloads to finish.", parse_mode='Markdown')
             else:
                 if status_msg:
                     request_edit(status_msg, "⚠️ System Error: Queue not active.", terminal=True)
                 else:
-                    await msg.reply_text("⚠️ System Error: Queue not active.")
+                    await _safe_reply(msg, "⚠️ System Error: Queue not active.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager) -> None:
     if not await require_allowed(update, access_manager):
