@@ -91,6 +91,8 @@ class EditCoordinator:
         self._last_msg_edit_time: Dict[Tuple[str, int], float] = {}
         # (chat_id, msg_id) -> (last_sent_text, last_sent_markup)
         self._last_sent_content: Dict[Tuple[str, int], Tuple[str, Any]] = {}
+        # (chat_id, msg_id) set of messages that have had a terminal edit sent
+        self._terminal_sent: set = set()
 
     @staticmethod
     def _extract_chat_id(message: Any) -> Optional[str]:
@@ -134,6 +136,16 @@ class EditCoordinator:
 
         msg_key = (chat_id, msg_id)
 
+        # If a terminal edit was already sent or is currently pending,
+        # ignore later non-terminal edits for this message.
+        if not terminal:
+            if msg_key in self._terminal_sent:
+                return
+            if chat_id in self._pending_edits:
+                existing = self._pending_edits[chat_id].get(msg_id)
+                if existing and existing.terminal:
+                    return
+
         # Check deduplication against last successfully sent content for this (chat_id, msg_id)
         last_sent = self._last_sent_content.get(msg_key)
         if last_sent == (text, reply_markup):
@@ -158,7 +170,7 @@ class EditCoordinator:
             terminal=is_terminal,
             request_time=now,
         )
-        # Latest-wins per message
+        # Latest-wins per message (a later terminal edit replaces an earlier terminal edit)
         self._pending_edits[chat_id][msg_id] = req
 
         self._ensure_worker(chat_id)
@@ -272,6 +284,8 @@ class EditCoordinator:
                     self._last_sent_content[ready_msg_key] = (req.text, req.reply_markup)
                     self._last_msg_edit_time[ready_msg_key] = sent_time
                     self._last_chat_edit_time[chat_id] = sent_time
+                    if req.terminal:
+                        self._terminal_sent.add(ready_msg_key)
 
                     if pending.get(ready_msg_id) is req:
                         pending.pop(ready_msg_id, None)
@@ -315,6 +329,8 @@ class EditCoordinator:
                         self._last_sent_content[ready_msg_key] = (req.text, req.reply_markup)
                         self._last_msg_edit_time[ready_msg_key] = sent_time
                         self._last_chat_edit_time[chat_id] = sent_time
+                        if req.terminal:
+                            self._terminal_sent.add(ready_msg_key)
                         if pending.get(ready_msg_id) is req:
                             pending.pop(ready_msg_id, None)
                         logging.debug(f"Message {ready_msg_id} not modified; treated as success.")

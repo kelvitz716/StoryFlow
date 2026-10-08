@@ -228,3 +228,49 @@ async def test_same_message_id_in_two_chats_both_delivered():
     assert msg1.calls[0]["text"] == "Identical text"
     assert len(msg2.calls) == 1
     assert msg2.calls[0]["text"] == "Identical text"
+
+
+@pytest.mark.asyncio
+async def test_terminal_pending_ignores_non_terminal_and_later_terminal_replaces():
+    """Pending terminal edit ignores later non-terminal edits; a later terminal edit replaces."""
+    fake_clock = FakeClock()
+    coord = EditCoordinator(clock=fake_clock.time, sleep_func=fake_clock.sleep)
+    msg = FakeMessage(chat_id=301, message_id=1, clock_func=fake_clock.time)
+
+    # 1. Enqueue terminal edit
+    coord.request_edit(msg, "Terminal 1", terminal=True)
+    # 2. Later non-terminal edit while terminal is pending must be ignored
+    coord.request_edit(msg, "Progress 50%", terminal=False)
+    # 3. Later terminal edit replaces earlier terminal edit
+    coord.request_edit(msg, "Terminal 2", terminal=True)
+
+    await coord.flush("301")
+
+    assert len(msg.calls) == 1
+    assert msg.calls[0]["text"] == "Terminal 2"
+
+
+@pytest.mark.asyncio
+async def test_terminal_sent_ignores_non_terminal_and_later_terminal_replaces():
+    """Sent terminal edit ignores later non-terminal edits; a later terminal edit replaces."""
+    fake_clock = FakeClock()
+    coord = EditCoordinator(clock=fake_clock.time, sleep_func=fake_clock.sleep)
+    msg = FakeMessage(chat_id=302, message_id=2, clock_func=fake_clock.time)
+
+    # 1. Send terminal edit
+    coord.request_edit(msg, "Done", terminal=True)
+    await coord.flush("302")
+    assert len(msg.calls) == 1
+    assert msg.calls[0]["text"] == "Done"
+
+    # 2. Later non-terminal edit is ignored
+    coord.request_edit(msg, "Late progress", terminal=False)
+    await coord.flush("302")
+    assert len(msg.calls) == 1  # Not sent!
+
+    # 3. Later terminal edit replaces
+    coord.request_edit(msg, "Revised Done", terminal=True)
+    await coord.flush("302")
+    assert len(msg.calls) == 2
+    assert msg.calls[1]["text"] == "Revised Done"
+
