@@ -55,7 +55,9 @@ class EditCoordinator:
     - Per-message pacing: non-terminal edits are spaced at least 3.5s apart per message.
     - RetryAfter(n): opens a per-chat gate until now + n + 1. Terminal edits are never dropped and flush when the gate opens.
     - BadRequest "Message is not modified" is treated as success without error logging.
-    - send_gate_open(chat_id): returns True while a RetryAfter gate is active.
+    - BadRequest "message to edit not found" is logged at DEBUG and dropped (item 4).
+    - discard(message): cancels any pending edit; future edits for that message are dropped (item 4).
+    - send_gate_open(chat_id): returns True while a RetryAfter gate is active (item 2).
     - Injectable clock and sleep_func for fast deterministic testing.
     """
 
@@ -97,6 +99,8 @@ class EditCoordinator:
         self._last_sent_content: OrderedDict[Tuple[str, int], Tuple[str, Any]] = OrderedDict()
         # (chat_id, msg_id) -> True for messages with terminal edit sent (LRU bounded)
         self._terminal_sent: OrderedDict[Tuple[str, int], bool] = OrderedDict()
+        # set of (chat_id, msg_id) tuples that have been discarded (item 4)
+        self._discarded_messages: set = set()
 
     def send_gate_open(self, chat_id: str) -> bool:
         """Return True if a RetryAfter gate is currently active for this chat (item 2).
@@ -123,6 +127,21 @@ class EditCoordinator:
             f"handle_url RetryAfter({retry_after}s) for chat {chat_id}. "
             f"Send gate open until {gate_until}."
         )
+
+    def discard(self, message: Any) -> None:
+        """Discard all pending edits for *message* and prevent future ones (item 4).
+
+        Typical use: call before message.delete() so the edit worker never
+        tries to edit a deleted message.
+        """
+        msg_id = self._extract_msg_id(message)
+        if msg_id is None:
+            return
+        chat_id = self._extract_chat_id(message)
+        self._discarded_messages.add(msg_id)
+        # Drop any pending edit for this message
+        if chat_id and chat_id in self._pending_edits:
+            self._pending_edits[chat_id].pop(msg_id, None)
 
     @staticmethod
     def _extract_chat_id(message: Any) -> Optional[str]:
@@ -189,6 +208,10 @@ class EditCoordinator:
         chat_id = self._extract_chat_id(message)
         msg_id = self._extract_msg_id(message)
         if not chat_id or msg_id is None:
+            return
+
+        # Drop silently if this message was discarded (item 4)
+        if msg_id in self._discarded_messages:
             return
 
         msg_key = (chat_id, msg_id)
@@ -330,6 +353,11 @@ class EditCoordinator:
                         pending.pop(ready_msg_id, None)
                         continue
 
+                # Discard check (item 4): skip edit if message was discarded
+                if ready_msg_id in self._discarded_messages:
+                    pending.pop(ready_msg_id, None)
+                    continue
+
                 # Execute edit_text
                 try:
                     kwargs = {}
@@ -386,6 +414,19 @@ class EditCoordinator:
                         or e.__class__.__name__ == "BadRequest"
                         or "not modified" in err_str
                     ) and "not modified" in err_str
+
+                    # BadRequest "message to edit not found" — message deleted (item 4)
+                    is_not_found = (
+                        (isinstance(e, BadRequest) or e.__class__.__name__ == "BadRequest")
+                        and "message to edit not found" in err_str
+                    )
+                    if is_not_found:
+                        logging.debug(
+                            f"Message {ready_msg_id} in chat {chat_id} not found (deleted); dropping edit."
+                        )
+                        if pending.get(ready_msg_id) is req:
+                            pending.pop(ready_msg_id, None)
+                        continue
 
                     if is_not_modified:
                         sent_time = self.clock()
@@ -455,6 +496,11 @@ def request_edit(
         reply_markup=reply_markup,
         terminal=terminal,
     )
+
+
+def discard(message: Any) -> None:
+    """Discard pending/future edits for *message* (item 4)."""
+    get_edit_coordinator().discard(message)
 
 
 def send_gate_open(chat_id: str) -> bool:

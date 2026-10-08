@@ -156,6 +156,8 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
     else:
         if status_msg:
             try:
+                from bot.edit_gate import discard
+                discard(status_msg)
                 await status_msg.delete()
-            except:
+            except Exception:
                 pass
