@@ -230,12 +230,21 @@ class BaseDownloader:
                     logging.debug(f"STDERR ({process_name}): {stderr_text}")
 
                 # Check if it's an authentication error
-                if 'login' in stderr_text.lower() or 'authentication' in stderr_text.lower():
+                # gallery-dl: only exit code 16 (AuthRequired/AuthenticationError/AuthorizationError)
+                stderr_lower = stderr_text.lower()
+                is_auth_error = (
+                    returncode == 16
+                    or 'login required' in stderr_lower
+                    or '401' in stderr_lower
+                    or 'sign in to confirm' in stderr_lower
+                )
+                if is_auth_error:
                     return {
                         'success': False,
                         'error': 'Authentication required',
                         'details': 'Please provide cookies for this platform',
-                        'platform': process_name
+                        'platform': process_name,
+                        'returncode': returncode
                     }
 
                 # Check for 404 or content not found
