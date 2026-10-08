@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from bot.handlers import handle_url, _CHAT_BURSTS, _LAST_BACKLOG_SUBMIT
+from bot.handlers import handle_url, _CHAT_BURSTS, _LAST_BACKLOG_SUBMIT, _BACKLOG_JOBS
 from bot.edit_gate import EditCoordinator, set_edit_coordinator
 from core.queue import DownloadJob, JobStatus
 
@@ -177,3 +177,184 @@ async def test_fresh_message_behaves_normally():
     # Status message was queued and updated
     status_msg = msg.reply_calls[0]["msg"]
     assert "Queued" in status_msg.text
+
+
+@pytest.mark.asyncio
+async def test_3_backlog_jobs_1_failing_summary_shows_2_done_1_failed():
+    """
+    3 backlog jobs, 1 failing -> summary shows 2 done, 1 failed.
+    Verifies outcomes are recorded when jobs have no status message,
+    and single summary is updated with failed links listed.
+    """
+    _CHAT_BURSTS.clear()
+    _LAST_BACKLOG_SUBMIT.clear()
+    _BACKLOG_JOBS.clear()
+
+    fake_clock = FakeClock(start_time=2000.0)
+    coord = EditCoordinator(
+        edit_min_interval=0.0,
+        msg_min_interval=0.0,
+        clock=fake_clock.time,
+        sleep_func=fake_clock.sleep,
+    )
+    set_edit_coordinator(coord)
+
+    chat_id = 777
+    past_date = datetime.fromtimestamp(1700.0, tz=timezone.utc)
+
+    jobs = []
+    mock_queue = MagicMock()
+
+    async def fake_submit(*args, **kwargs):
+        j = DownloadJob(
+            job_id=f"backlog-job-{len(jobs) + 1}",
+            user_id="123",
+            chat_id=str(chat_id),
+            url=kwargs.get("url", f"https://instagram.com/p/test{len(jobs)}"),
+            platform="instagram",
+        )
+        jobs.append(j)
+        return j
+
+    mock_queue.submit = AsyncMock(side_effect=fake_submit)
+    mock_queue.get_queue_position = MagicMock(return_value=1)
+
+    access_mgr = MagicMock()
+    access_mgr.is_system_sender.return_value = False
+    access_mgr.is_anonymous_sender.return_value = False
+    access_mgr.is_user_allowed.return_value = True
+
+    context = MagicMock()
+    context.user_data = {}
+
+    messages = []
+    urls = [
+        "https://instagram.com/p/success1",
+        "https://instagram.com/p/fail1",
+        "https://instagram.com/p/success2",
+    ]
+    for i, u in enumerate(urls):
+        update, msg = make_update(chat_id, 300 + i, u, past_date)
+        messages.append(msg)
+        await handle_url(update, context, access_mgr, mock_queue)
+
+    await coord.flush(str(chat_id))
+
+    # Single summary message reply created
+    total_replies = [call for m in messages for call in m.reply_calls]
+    assert len(total_replies) == 1
+    summary_msg = total_replies[0]["msg"]
+    assert "3 queued links" in summary_msg.text
+
+    assert len(jobs) == 3
+
+    # Now simulate execution of jobs: job 0 succeeds, job 1 fails, job 2 succeeds
+    from bot.telegram_bot import update_job_status
+    app_mock = MagicMock()
+
+    # Job 0 succeeds
+    jobs[0].status = JobStatus.COMPLETED
+    await update_job_status(app_mock, jobs[0])
+
+    # Job 1 fails
+    jobs[1].status = JobStatus.FAILED
+    jobs[1].error = "Video is private"
+    await update_job_status(app_mock, jobs[1])
+
+    # Job 2 succeeds
+    jobs[2].status = JobStatus.COMPLETED
+    await update_job_status(app_mock, jobs[2])
+
+    await coord.flush(str(chat_id))
+
+    # Summary shows 2 done, 1 failed, 0 left
+    assert "2 done, 1 failed" in summary_msg.text
+    assert "0 left" in summary_msg.text
+    # Failed links section lists the failed link
+    assert "Failed links:" in summary_msg.text
+    assert "https://instagram.com/p/fail1" in summary_msg.text
+
+
+@pytest.mark.asyncio
+async def test_backlog_failed_links_truncated_to_5_plus_and_n_more():
+    """
+    Backlog burst with >5 failures truncates failed links list to 5 plus 'and N more'.
+    """
+    _CHAT_BURSTS.clear()
+    _LAST_BACKLOG_SUBMIT.clear()
+    _BACKLOG_JOBS.clear()
+
+    fake_clock = FakeClock(start_time=2000.0)
+    coord = EditCoordinator(
+        edit_min_interval=0.0,
+        msg_min_interval=0.0,
+        clock=fake_clock.time,
+        sleep_func=fake_clock.sleep,
+    )
+    set_edit_coordinator(coord)
+
+    chat_id = 666
+    past_date = datetime.fromtimestamp(1700.0, tz=timezone.utc)
+
+    jobs = []
+    mock_queue = MagicMock()
+
+    async def fake_submit(*args, **kwargs):
+        j = DownloadJob(
+            job_id=f"trunc-job-{len(jobs) + 1}",
+            user_id="123",
+            chat_id=str(chat_id),
+            url=kwargs.get("url", f"https://instagram.com/p/test{len(jobs)}"),
+            platform="instagram",
+        )
+        jobs.append(j)
+        return j
+
+    mock_queue.submit = AsyncMock(side_effect=fake_submit)
+    mock_queue.get_queue_position = MagicMock(return_value=1)
+
+    access_mgr = MagicMock()
+    access_mgr.is_system_sender.return_value = False
+    access_mgr.is_anonymous_sender.return_value = False
+    access_mgr.is_user_allowed.return_value = True
+
+    context = MagicMock()
+    context.user_data = {}
+
+    # Queue 8 links: 1 succeeds, 7 fail
+    messages = []
+    for i in range(8):
+        update, msg = make_update(chat_id, 400 + i, f"https://instagram.com/p/link{i}", past_date)
+        messages.append(msg)
+        await handle_url(update, context, access_mgr, mock_queue)
+
+    await coord.flush(str(chat_id))
+
+    total_replies = [call for m in messages for call in m.reply_calls]
+    summary_msg = total_replies[0]["msg"]
+
+    from bot.telegram_bot import update_job_status
+    app_mock = MagicMock()
+
+    # Job 0 succeeds
+    jobs[0].status = JobStatus.COMPLETED
+    await update_job_status(app_mock, jobs[0])
+
+    # Jobs 1..7 fail
+    for i in range(1, 8):
+        jobs[i].status = JobStatus.FAILED
+        jobs[i].error = "Download error"
+        await update_job_status(app_mock, jobs[i])
+
+    await coord.flush(str(chat_id))
+
+    assert "1 done, 7 failed, 0 left" in summary_msg.text
+    assert "Failed links:" in summary_msg.text
+    # Exactly first 5 failed links appear
+    for i in range(1, 6):
+        assert f"https://instagram.com/p/link{i}" in summary_msg.text
+    # 6th and 7th failed links are truncated
+    assert "https://instagram.com/p/link6" not in summary_msg.text
+    assert "https://instagram.com/p/link7" not in summary_msg.text
+    # "and 2 more" is present
+    assert "and 2 more" in summary_msg.text

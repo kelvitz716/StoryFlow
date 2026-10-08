@@ -36,7 +36,8 @@ from bot.menus import (
 )
 from bot.handlers import (
     handle_url, start, help_command, handle_document,
-    handle_auth_input, get_auth_code, get_auth_password
+    handle_auth_input, get_auth_code, get_auth_password,
+    record_backlog_job_outcome
 )
 from bot.guards import require_allowed
 from bot.uploader import batch_upload_media
@@ -64,8 +65,10 @@ async def update_job_status(application: Application, job: DownloadJob):
         if job.status == JobStatus.COMPLETED:
             stats_manager.increment_download(job.user_id, job.platform)
             pop_job_message(job.job_id)
+            record_backlog_job_outcome(job)
         elif job.status == JobStatus.FAILED:
             pop_job_message(job.job_id)
+            record_backlog_job_outcome(job)
         return
 
     try:

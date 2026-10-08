@@ -36,12 +36,95 @@ from bot.edit_gate import request_edit, get_edit_coordinator
 _CHAT_BURSTS: dict = {}
 _LAST_BACKLOG_SUBMIT: dict = {}
 _BACKLOG_LOCKS: dict = {}
+_BACKLOG_JOBS: dict = {}
 
 
 def _get_backlog_lock(chat_id: str) -> asyncio.Lock:
     if chat_id not in _BACKLOG_LOCKS:
         _BACKLOG_LOCKS[chat_id] = asyncio.Lock()
     return _BACKLOG_LOCKS[chat_id]
+
+
+def _format_burst_summary(burst: dict) -> str:
+    """Format the single summary message for a backlog burst with queued/done/failed counts."""
+    done = burst.get("done", 0)
+    failed = burst.get("failed", 0)
+    queued = burst.get("count", 0)
+    left = max(0, queued - done - failed)
+
+    text = f"Back online: {done} done, {failed} failed, {left} left"
+    failed_links = burst.get("failed_links", [])
+    if failed_links:
+        text += "\n\nFailed links:"
+        for link in failed_links[:5]:
+            text += f"\n• {link}"
+        if len(failed_links) > 5:
+            more = len(failed_links) - 5
+            text += f"\nand {more} more"
+    return text
+
+
+def register_backlog_job(job_id: str, chat_id: str, url: str) -> None:
+    """Register a queued backlog job to track its outcome in its chat burst."""
+    _BACKLOG_JOBS[str(job_id)] = {
+        "chat_id": str(chat_id),
+        "url": str(url),
+    }
+
+
+def record_backlog_job_outcome(job) -> None:
+    """Record completion or failure of a backlog job and update the burst summary."""
+    status = getattr(job, "status", None)
+    status_str = str(getattr(status, "value", status)).lower()
+    is_completed = "completed" in status_str
+    is_failed = "failed" in status_str
+    if not (is_completed or is_failed):
+        return
+
+    job_id = str(getattr(job, "job_id", ""))
+    chat_id = None
+    url = getattr(job, "url", "")
+
+    if job_id and job_id in _BACKLOG_JOBS:
+        info = _BACKLOG_JOBS.pop(job_id)
+        chat_id = info["chat_id"]
+        url = info.get("url", url)
+    elif getattr(job, "chat_id", None) is not None:
+        chat_id = str(job.chat_id)
+
+    if not chat_id or chat_id not in _CHAT_BURSTS:
+        return
+
+    burst = _CHAT_BURSTS[chat_id]
+    if is_completed:
+        burst["done"] = burst.get("done", 0) + 1
+    elif is_failed:
+        burst["failed"] = burst.get("failed", 0) + 1
+        if url:
+            failed_links = burst.setdefault("failed_links", [])
+            failed_links.append(url)
+
+    summary_msg = burst.get("summary_msg")
+    if summary_msg:
+        summary_text = _format_burst_summary(burst)
+        request_edit(summary_msg, summary_text)
+
+
+def record_backlog_job_failure(chat_id: str, url: str) -> None:
+    """Record an immediate backlog job failure (e.g. queue full) and update summary."""
+    chat_id = str(chat_id)
+    if chat_id not in _CHAT_BURSTS:
+        return
+    burst = _CHAT_BURSTS[chat_id]
+    burst["failed"] = burst.get("failed", 0) + 1
+    if url:
+        failed_links = burst.setdefault("failed_links", [])
+        failed_links.append(url)
+
+    summary_msg = burst.get("summary_msg")
+    if summary_msg:
+        summary_text = _format_burst_summary(burst)
+        request_edit(summary_msg, summary_text)
 
 
 async def _register_backlog_link(msg, chat_id: str) -> None:
@@ -52,14 +135,20 @@ async def _register_backlog_link(msg, chat_id: str) -> None:
         burst["count"] += 1
         burst["last_time"] = now
         n = burst["count"]
-        summary_text = f"Back online: processing {n} queued links"
-        request_edit(burst["summary_msg"], summary_text, parse_mode='Markdown')
+        if burst.get("done", 0) > 0 or burst.get("failed", 0) > 0:
+            summary_text = _format_burst_summary(burst)
+        else:
+            summary_text = f"Back online: processing {n} queued links"
+        request_edit(burst["summary_msg"], summary_text)
     else:
         summary_text = "Back online: processing 1 queued links"
-        summary_msg = await msg.reply_text(summary_text, parse_mode='Markdown')
+        summary_msg = await msg.reply_text(summary_text)
         _CHAT_BURSTS[chat_id] = {
             "summary_msg": summary_msg,
             "count": 1,
+            "done": 0,
+            "failed": 0,
+            "failed_links": [],
             "last_time": now,
         }
 
@@ -222,9 +311,13 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                         chat_id=chat_id,
                         message_id=msg.message_id
                     )
-                    if not job:
+                    if job:
+                        register_backlog_job(job.job_id, chat_id, url)
+                    else:
+                        record_backlog_job_failure(chat_id, url)
                         await msg.reply_text("⚠️ *Queue Full*\nPlease wait for your active downloads to finish.")
                 else:
+                    record_backlog_job_failure(chat_id, url)
                     await msg.reply_text("⚠️ System Error: Queue not active.")
         else:
             if download_queue:
