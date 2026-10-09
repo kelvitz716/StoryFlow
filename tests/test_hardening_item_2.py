@@ -61,3 +61,24 @@ def test_uploader_imports_and_checks_send_gate_open(caplog):
     assert uploader_send_gate_open(chat_id)
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warning_records) >= 1
+
+
+def test_hermetic_dns_stubs_platform_hosts_offline():
+    """Verify conftest stub resolves known platforms and blocks unknown DNS without network."""
+    import socket
+    from core.security import is_safe_url
+
+    # Known platforms resolve to public IPs
+    info_ig = socket.getaddrinfo("instagram.com", 443)
+    assert len(info_ig) > 0
+    assert info_ig[0][4][0] == "157.240.22.35"
+    assert is_safe_url("https://www.instagram.com/reel/DePLuhYSw-R/") is True
+
+    info_snap = socket.getaddrinfo("snapchat.com", 443)
+    assert info_snap[0][4][0] == "142.250.180.46"
+    assert is_safe_url("https://story.snapchat.com/u/user") is True
+
+    # Unknown hosts fail closed (simulating blocked DNS)
+    with pytest.raises(socket.gaierror):
+        socket.getaddrinfo("some-arbitrary-unregistered-domain-12345.xyz", 80)
+
