@@ -160,7 +160,7 @@ async def resolve_shortlink(url: str) -> str:
     return await asyncio.to_thread(_do_resolve)
 
 
-def escape_markdown(text: str, version: int = 2) -> str:
+def escape_markdown(text: str, version: int = 1) -> str:
     """
     Escape special characters for Telegram Markdown.
 
@@ -197,7 +197,7 @@ def format_error_message(error: str, platform: Optional[str] = None) -> str:
     else:
         hint = ""
 
-    return f"{prefix}\n{escape_markdown(error)}{hint}"
+    return f"{prefix}\n{escape_markdown(error, version=1)}{hint}"
 
 def get_platform_emoji(platform: str) -> str:
     """Get emoji for a platform."""

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 import shutil
 from core.storage import is_storage_critical
@@ -85,12 +86,13 @@ class DownloadQueue:
         max_concurrent: int = 10,
         max_per_user: int = 20,
         status_callback: Optional[Callable] = None,
-        downloader_registry: Optional[DownloaderRegistry] = None
+        downloader_registry: Optional[DownloaderRegistry] = None,
+        download_path: Optional[str] = None
     ):
         self.max_concurrent = max(1, max_concurrent)
         self.max_per_user = max(1, max_per_user)
         self.status_callback = status_callback
-        self.download_path = os.getenv('DOWNLOAD_PATH', './downloads')
+        self.download_path = download_path or os.getenv('DOWNLOAD_PATH', './downloads')
         
         self.registry = downloader_registry or DownloaderRegistry()
         
@@ -255,6 +257,7 @@ class DownloadQueue:
                     if "Event loop is closed" in str(e): break
                     raise
                 
+                job_start_time = time.monotonic()
                 logging.info(f"⚙️ Worker {worker_id} processing job {job.job_id}")
                 
                 try:
@@ -326,6 +329,8 @@ class DownloadQueue:
                     job.message = f"Delivered {len(job.files)} files"
                     await job.save_to_db()
                     await self._notify_status(job)
+                    elapsed = time.monotonic() - job_start_time
+                    logging.info(f"✅ Job {job.job_id} ({job.platform}) completed in {elapsed:.1f}s")
                     
                 except Exception as e:
                     logging.error(f"Job {job.job_id} failed with exception: {e}")
@@ -373,9 +378,12 @@ class DownloadQueue:
                         try:
                             if current_time - entry.stat().st_mtime > 7200:
                                 shutil.rmtree(entry.path)
-                        except: pass
+                                logging.debug(f"Cleaned up stale job folder {entry.path}")
+                        except Exception as e:
+                            logging.debug(f"Failed to remove stale job folder {entry.path}: {e}")
             except asyncio.CancelledError: break
-            except Exception:
+            except Exception as e:
+                logging.debug(f"Background cleanup error: {e}")
                 await asyncio.sleep(60)
 
     def _startup_sweep(self):
@@ -383,12 +391,17 @@ class DownloadQueue:
         count = 0
         try:
             for entry in os.scandir(self.download_path):
-                if entry.is_dir():
+                # Only sweep directories matching the 8-character hex job ID format
+                if entry.is_dir() and re.fullmatch(r'[0-9a-f]{8}', entry.name):
                     try:
                         shutil.rmtree(entry.path)
                         count += 1
-                    except: pass
-        except: pass
+                    except Exception as e:
+                        logging.debug(f"Startup sweep failed for {entry.path}: {e}")
+            if count > 0:
+                logging.info(f"🧹 Startup sweep: removed {count} orphaned job directories.")
+        except Exception as e:
+            logging.debug(f"Startup sweep error: {e}")
 
 
 download_queue: Optional[DownloadQueue] = None

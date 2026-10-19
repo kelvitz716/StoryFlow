@@ -186,6 +186,18 @@ async def _register_backlog_link(msg, chat_id: str) -> None:
         if burst.get("summary_msg") is not None:
             request_edit(burst["summary_msg"], summary_text)
     else:
+        # Prune stale entries (inactive > 1 hour) before creating a new burst to
+        # prevent unbounded dict growth on long-running instances.
+        _MAX_BURST_AGE = 3600.0
+        stale = [cid for cid, b in _CHAT_BURSTS.items() if now - b["last_time"] > _MAX_BURST_AGE]
+        for cid in stale:
+            _CHAT_BURSTS.pop(cid, None)
+            _LAST_BACKLOG_SUBMIT.pop(cid, None)
+            _BACKLOG_LOCKS.pop(cid, None)
+            task = _DEFERRED_SUMMARY_TASKS.pop(cid, None)
+            if task and not task.done():
+                task.cancel()
+
         summary_text = "Back online: processing 1 queued links"
         summary_msg = None
         coord = get_edit_coordinator()

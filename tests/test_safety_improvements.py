@@ -249,3 +249,58 @@ async def test_async_save_to_db():
         row = conn.execute("SELECT status FROM jobs WHERE job_id = ?", ("test_async_job_1",)).fetchone()
         assert row is not None
         assert row["status"] == "downloading"
+
+
+def test_startup_sweep_preserves_non_job_directories():
+    """Verify _startup_sweep only deletes 8-hex-char job directories and preserves other folders."""
+    from core.queue import DownloadQueue
+
+    with tempfile.TemporaryDirectory() as dl_dir:
+        # 1. Job directory (8 hex chars)
+        job_dir = os.path.join(dl_dir, "4fb09d5c")
+        os.makedirs(job_dir, exist_ok=True)
+
+        # 2. Non-job directory (e.g. cookies, static, other folders)
+        keep_dir = os.path.join(dl_dir, "custom_folder")
+        os.makedirs(keep_dir, exist_ok=True)
+
+        q = DownloadQueue(download_path=dl_dir)
+        q._startup_sweep()
+
+        # Job directory deleted
+        assert not os.path.exists(job_dir)
+        # Custom directory preserved
+        assert os.path.exists(keep_dir)
+
+
+def test_format_error_message_uses_v1_escaping():
+    """Verify format_error_message uses Markdown V1 escaping (does not escape periods/hyphens)."""
+    from utils.bot_utils import format_error_message
+
+    msg = format_error_message("File not found: test-file.mp4 (404 error)")
+    # V2 would have turned . and - into \. and \-
+    assert r"\." not in msg
+    assert r"\-" not in msg
+    assert "*Error*" in msg
+
+
+def test_cookie_manager_list_cookies_uses_mtime_cache():
+    """Verify list_cookies caches cookie expiry based on file mtime."""
+    from auth.cookies import CookieManager
+
+    with tempfile.TemporaryDirectory() as cookie_dir:
+        cm = CookieManager(cookie_path=cookie_dir)
+        cookie_file = os.path.join(cookie_dir, "instagram_user123.txt")
+        with open(cookie_file, "w") as f:
+            f.write("# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tFALSE\t2000000000\tsessionid\tabc\n")
+
+        # First call populates cache
+        cookies = cm.list_cookies("user123")
+        assert len(cookies) == 1
+        assert cookie_file in cm._expiry_cache
+
+        # Subsequent call uses cache
+        cached_tuple = cm._expiry_cache[cookie_file]
+        cookies2 = cm.list_cookies("user123")
+        assert len(cookies2) == 1
+        assert cm._expiry_cache[cookie_file] == cached_tuple

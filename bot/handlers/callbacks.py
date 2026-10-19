@@ -119,7 +119,7 @@ async def button_callback(
             except AttributeError:
                 pass
         if not download_path:
-            download_path = os.getenv('DOWNLOAD_PATH', '/app/downloads')
+            download_path = os.getenv('DOWNLOAD_PATH', './downloads')
         try:
             removed = 0
             if os.path.isdir(download_path):
@@ -159,9 +159,8 @@ async def button_callback(
         else:
             was_deleted = cookie_manager.delete_cookie_file(user_id, platform)
             notice = f"✅ {platform.title()} cookies deleted." if was_deleted else f"ℹ️ No {platform.title()} cookies were saved."
-        # Edit to show result briefly, then re-render the full cookies menu
-        await query.edit_message_text(notice)
-        await send_cookies_menu(query, user_id, cookie_manager, is_new_message=False)
+        # Single edit: render the cookies menu with the deletion notice inline (avoids a redundant back-to-back edit)
+        await send_cookies_menu(query, user_id, cookie_manager, is_new_message=False, notice=notice)
     
     elif data.startswith("cookies_"):
         platform = data.replace("cookies_", "")
