@@ -11,6 +11,7 @@ from bot.menus import send_admin_menu
 AUTH_PENDING = None
 AUTH_TYPE = None
 AUTH_ADMIN_ID = None
+_AUTH_LOCK = asyncio.Lock()
 
 
 async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -66,30 +67,32 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def get_auth_code(application: Application, access_manager: AccessManager) -> str:
     global AUTH_PENDING, AUTH_TYPE, AUTH_ADMIN_ID
-    admin_id = access_manager.admin_id
-    AUTH_ADMIN_ID = admin_id
-    AUTH_PENDING = asyncio.Future()
-    AUTH_TYPE = 'code'
-    
-    await application.bot.send_message(chat_id=int(admin_id), text="📲 *MTProto Code Required*\nPlease send the 5-6 digit code.", parse_mode='Markdown')
-    try:
-        return await asyncio.wait_for(AUTH_PENDING, timeout=180)
-    finally:
-        AUTH_PENDING = AUTH_TYPE = AUTH_ADMIN_ID = None
+    async with _AUTH_LOCK:
+        admin_id = access_manager.admin_id
+        AUTH_ADMIN_ID = admin_id
+        AUTH_PENDING = asyncio.Future()
+        AUTH_TYPE = 'code'
+        
+        await application.bot.send_message(chat_id=int(admin_id), text="📲 *MTProto Code Required*\nPlease send the 5-6 digit code.", parse_mode='Markdown')
+        try:
+            return await asyncio.wait_for(AUTH_PENDING, timeout=180)
+        finally:
+            AUTH_PENDING = AUTH_TYPE = AUTH_ADMIN_ID = None
 
 
 async def get_auth_password(application: Application, access_manager: AccessManager) -> str:
     global AUTH_PENDING, AUTH_TYPE, AUTH_ADMIN_ID
-    admin_id = access_manager.admin_id
-    AUTH_ADMIN_ID = admin_id
-    AUTH_PENDING = asyncio.Future()
-    AUTH_TYPE = 'password'
-    
-    await application.bot.send_message(chat_id=int(admin_id), text="🔐 *2FA Password Required*\nPlease send your password.", parse_mode='Markdown')
-    try:
-        return await asyncio.wait_for(AUTH_PENDING, timeout=180)
-    finally:
-        AUTH_PENDING = AUTH_TYPE = AUTH_ADMIN_ID = None
+    async with _AUTH_LOCK:
+        admin_id = access_manager.admin_id
+        AUTH_ADMIN_ID = admin_id
+        AUTH_PENDING = asyncio.Future()
+        AUTH_TYPE = 'password'
+        
+        await application.bot.send_message(chat_id=int(admin_id), text="🔐 *2FA Password Required*\nPlease send your password.", parse_mode='Markdown')
+        try:
+            return await asyncio.wait_for(AUTH_PENDING, timeout=180)
+        finally:
+            AUTH_PENDING = AUTH_TYPE = AUTH_ADMIN_ID = None
 
 
 async def handle_auth_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -100,7 +103,8 @@ async def handle_auth_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if AUTH_TYPE == 'code':
         code = text.replace('-', '').replace(' ', '')
         if code.isdigit() and len(code) in [5, 6]:
-            AUTH_PENDING.set_result(code)
+            if not AUTH_PENDING.done():
+                AUTH_PENDING.set_result(code)
             await update.message.reply_text("✅ Code accepted.")
         else:
             await update.message.reply_text("❌ Invalid code.")

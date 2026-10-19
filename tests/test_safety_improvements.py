@@ -202,3 +202,50 @@ def test_save_cookie_file_sets_0600_permissions():
         finally:
             if os.path.exists(src_file):
                 os.remove(src_file)
+
+
+def test_access_manager_is_allowed_caching():
+    """Verify is_allowed caches positive and negative responses and invalidates on mutation."""
+    from auth.access import AccessManager
+
+    am = AccessManager(admin_id="999999")
+    test_user = "12345678"
+
+    # Initially not allowed
+    assert am.is_allowed(test_user) is False
+    assert test_user in am._cache
+    assert am._cache[test_user][0] is False
+
+    # Add user -> cache updated to True
+    am.add_user(test_user)
+    assert am.is_allowed(test_user) is True
+    assert am._cache[test_user][0] is True
+
+    # Remove user -> cache updated to False
+    am.remove_user(test_user)
+    assert am.is_allowed(test_user) is False
+    assert am._cache[test_user][0] is False
+
+
+@pytest.mark.asyncio
+async def test_async_save_to_db():
+    """Verify DownloadJob.save_to_db() is awaitable and persists to DB."""
+    from core.queue import DownloadJob, JobStatus
+    from core.database import db
+
+    job = DownloadJob(
+        job_id="test_async_job_1",
+        user_id="123",
+        chat_id="456",
+        message_id=789,
+        url="https://instagram.com/p/123",
+        platform="Instagram",
+        status=JobStatus.DOWNLOADING,
+    )
+
+    await job.save_to_db()
+
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE job_id = ?", ("test_async_job_1",)).fetchone()
+        assert row is not None
+        assert row["status"] == "downloading"

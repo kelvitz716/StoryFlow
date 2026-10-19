@@ -6,8 +6,6 @@ from typing import List, Optional
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.error import RetryAfter, NetworkError, TimedOut
 
-import time
-
 from bot.edit_gate import request_edit, send_gate_open
 
 
@@ -82,30 +80,33 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
         attempts = 0
         max_attempts = 3
         while attempts < max_attempts:
-            # Recreate media_group to ensure fresh, unread file handles per attempt
+            # Check flood gate BEFORE opening file handles to avoid FD churn
+            if send_gate_open(str(update.effective_chat.id)):
+                logging.warning(
+                    f"Batch {batch_idx+1}: send gate open for chat "
+                    f"{update.effective_chat.id}; deferring reply_media_group."
+                )
+                await asyncio.sleep(1)
+                continue
+
             media_group = []
+            open_handles = []
             for file_path in batch:
                 if not os.path.exists(file_path): continue
                 
                 ext = os.path.splitext(file_path)[1].lower()
+                f = open(file_path, 'rb')
+                open_handles.append(f)
                 if ext in ('.jpg', '.jpeg', '.png', '.webp'):
-                    media_group.append(InputMediaPhoto(media=open(file_path, 'rb')))
+                    media_group.append(InputMediaPhoto(media=f))
                 elif ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm'):
-                    media_group.append(InputMediaVideo(media=open(file_path, 'rb')))
+                    media_group.append(InputMediaVideo(media=f))
             
             if not media_group: 
                 break
 
             try:
                 # Increased timeout values specifically for heavy video batch sizes
-                # Item 2: skip send if the chat gate is open (RetryAfter was received)
-                if send_gate_open(str(update.effective_chat.id)):
-                    logging.warning(
-                        f"Batch {batch_idx+1}: send gate open for chat "
-                        f"{update.effective_chat.id}; deferring reply_media_group."
-                    )
-                    await asyncio.sleep(1)
-                    continue
                 await update.effective_message.reply_media_group(
                     media=media_group,
                     read_timeout=120,
@@ -136,13 +137,12 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                     failed_count += len(batch)
                     break
             finally:
-                # Close file handles safely
-                for media in media_group:
-                    if hasattr(media.media, 'close'): 
-                        try:
-                            media.media.close()
-                        except:
-                            pass
+                # Close all file handles opened in this attempt immediately
+                for h in open_handles:
+                    try:
+                        h.close()
+                    except Exception:
+                        pass
         else:
             # Reached max attempts
             failed_count += len(batch)

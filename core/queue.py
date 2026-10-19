@@ -56,8 +56,8 @@ class DownloadJob:
             "error": self.error,
         }
 
-    def save_to_db(self):
-        """Upsert the current state of the job to SQLite."""
+    def save_to_db_sync(self):
+        """Synchronously upsert the current state of the job to SQLite."""
         try:
             with db.get_conn() as conn:
                 conn.execute('''
@@ -69,6 +69,10 @@ class DownloadJob:
                 ''', (self.job_id, self.user_id, self.chat_id, self.message_id, self.url, self.platform, self.status.value))
         except Exception as e:
             logging.error(f"Failed to save job {self.job_id} to DB: {e}")
+
+    async def save_to_db(self):
+        """Async-safe upsert of the job state to SQLite offloaded to a thread pool."""
+        await asyncio.to_thread(self.save_to_db_sync)
 
 
 class DownloadQueue:
@@ -207,7 +211,7 @@ class DownloadQueue:
             job_dir=os.path.join(self.download_path, job_id)
         )
         
-        job.save_to_db()
+        await job.save_to_db()
         self._jobs[job_id] = job
         await self._queue.put((job, upload_func))
         
@@ -256,7 +260,7 @@ class DownloadQueue:
                 try:
                     job.status = JobStatus.DOWNLOADING
                     job.message = "Downloading content..."
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                     
                     if job.job_dir: os.makedirs(job.job_dir, exist_ok=True)
@@ -268,7 +272,7 @@ class DownloadQueue:
                         job.completed_at = datetime.now()
                         job.error = f"Storage Full ({current_usage}%)"
                         job.message = "Disk space is almost full. Purge system to continue."
-                        job.save_to_db()
+                        await job.save_to_db()
                         await self._notify_status(job)
                         continue
 
@@ -297,7 +301,7 @@ class DownloadQueue:
                         # Only store the sanitised error key, never raw stderr
                         job.error = result.get('error', 'Download failed')
                         job.message = f"Failed: {job.error}"
-                        job.save_to_db()
+                        await job.save_to_db()
                         await self._notify_status(job)
                         continue
                     
@@ -306,13 +310,13 @@ class DownloadQueue:
                         job.status = JobStatus.COMPLETED
                         job.completed_at = datetime.now()
                         job.message = result.get('message', 'No content found')
-                        job.save_to_db()
+                        await job.save_to_db()
                         await self._notify_status(job)
                         continue
                     
                     job.status = JobStatus.UPLOADING
                     job.message = f"Uploading {len(job.files)} files..."
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                     
                     await upload_func(job.files)
@@ -320,7 +324,7 @@ class DownloadQueue:
                     job.status = JobStatus.COMPLETED
                     job.completed_at = datetime.now()
                     job.message = f"Delivered {len(job.files)} files"
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                     
                 except Exception as e:
@@ -330,7 +334,7 @@ class DownloadQueue:
                     # Do NOT expose internal exception details to users
                     job.error = "Download failed due to an internal error"
                     job.message = "Download failed"
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                 
                 finally:
