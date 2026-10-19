@@ -151,7 +151,8 @@ class DownloadQueue:
                             parse_mode='Markdown'
                         )
                     except Exception as e:
-                        logging.warning(f"Could not send recovery message to {chat_id}: {e}")
+                        masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
+                        logging.warning(f"Could not send recovery message to {masked_chat}: {e}")
         except Exception as e:
             logging.error(f"Detailed recovery sweep failed: {e}")
     
@@ -189,7 +190,8 @@ class DownloadQueue:
         
         for existing_job in active_jobs:
             if existing_job.url == url:
-                logging.info(f"♻️ Job {existing_job.job_id} already active for URL: {url} (User: {user_id})")
+                masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
+                logging.info(f"♻️ Job {existing_job.job_id} already active for {existing_job.platform} (User: {masked_user})")
                 existing_job.is_already_active = True
                 return existing_job
 

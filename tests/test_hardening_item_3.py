@@ -250,3 +250,61 @@ async def test_already_active_job_does_not_overwrite_status_msg():
     # 2. JOB_MESSAGES was NOT overwritten (still points to initial_status_msg)
     assert JOB_MESSAGES["job-active-1"] is initial_status_msg
 
+
+@pytest.mark.asyncio
+async def test_handle_url_ignores_direct_channel_post():
+    """Verify direct channel_post updates are skipped so replies land in comments thread."""
+    from bot.handlers import handle_url
+    from unittest.mock import AsyncMock
+
+    update = MagicMock()
+    update.update_id = 4444
+    update.message = None
+    update.edited_message = None
+    update.edited_channel_post = None
+
+    cp = MagicMock()
+    cp.text = "https://instagram.com/p/channel_post_url"
+    update.channel_post = cp
+    update.effective_message = cp
+
+    queue_mock = MagicMock()
+    queue_mock.submit = AsyncMock()
+
+    await handle_url(update, MagicMock(), MagicMock(), queue_mock)
+    queue_mock.submit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_already_active_job_log_masks_user_and_omits_raw_url(caplog):
+    """Verify the 'already active' log masks user_id and omits raw URL to protect privacy."""
+    from core.queue import DownloadQueue
+    from unittest.mock import AsyncMock
+
+    queue = DownloadQueue(max_concurrent=1, max_per_user=5)
+    user_id = "-1003589434674"
+    url = "https://www.tiktok.com/@secret_user/video/998877665544"
+
+    upload_mock = AsyncMock()
+
+    # First submit succeeds
+    job1 = await queue.submit(user_id=user_id, url=url, platform="TikTok", upload_func=upload_mock)
+    assert job1 is not None
+
+    # Second submit triggers 'already active' log
+    with caplog.at_level(logging.INFO):
+        job2 = await queue.submit(user_id=user_id, url=url, platform="TikTok", upload_func=upload_mock)
+
+    assert job2 is job1
+    assert job2.is_already_active is True
+
+    # Check logs: full user ID must NOT appear, raw secret URL must NOT appear
+    active_logs = [r.message for r in caplog.records if "already active" in r.message]
+    assert len(active_logs) == 1
+    log_line = active_logs[0]
+
+    assert user_id not in log_line, f"Raw user ID leaked in log: {log_line}"
+    assert "-10***674" in log_line
+    assert "@secret_user" not in log_line, f"Raw secret URL leaked in log: {log_line}"
+    assert "TikTok" in log_line
+

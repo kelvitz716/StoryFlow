@@ -62,7 +62,8 @@ class CookieManager:
             # Copy file
             shutil.copy2(file_path, dest_file)
             
-            logging.info(f"✅ Cookie file saved for user {user_id}")
+            masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
+            logging.info(f"✅ Cookie file saved for user {masked_user}")
             return {
                 'success': True,
                 'cookie_file': dest_file,
@@ -229,7 +230,8 @@ class CookieManager:
         cookie_file = self.get_cookie_file(user_id, platform)
         if cookie_file and os.path.exists(cookie_file):
             os.remove(cookie_file)
-            logging.info(f"🗑️ Deleted cookie file for user {user_id}")
+            masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
+            logging.info(f"🗑️ Deleted cookie file for user {masked_user}")
             return True
         return False
     

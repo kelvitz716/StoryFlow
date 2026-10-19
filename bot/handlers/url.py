@@ -249,6 +249,11 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         logging.debug(f"Ignoring edit update {update_id} for message {message_id_val}")
         return
 
+    # Skip direct channel_post updates so replies land in the linked discussion group / comments thread
+    if update_type == "channel_post":
+        logging.debug(f"Skipping direct channel_post update {update_id} for message {message_id_val}")
+        return
+
     # Check if this text should be handled by admin input instead (group 0 handles it,
     # but we double check here to prevent duplicate processing)
     if context.user_data and context.user_data.get('awaiting_action'):
