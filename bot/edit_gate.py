@@ -2,13 +2,12 @@
 Centralized message edit rate-limiter and queue (EditCoordinator).
 Paces edits per chat and per message to prevent Telegram 429 RetryAfter storms.
 """
-import os
 import time
 import logging
 from typing import Optional, Callable, Awaitable, Dict, Any, Tuple
 from collections import OrderedDict
 import asyncio
-from core.queue import _env_float
+from core.config import _env_float
 
 try:
     from telegram.error import RetryAfter, BadRequest
@@ -99,8 +98,8 @@ class EditCoordinator:
         self._last_sent_content: OrderedDict[Tuple[str, int], Tuple[str, Any]] = OrderedDict()
         # (chat_id, msg_id) -> True for messages with terminal edit sent (LRU bounded)
         self._terminal_sent: OrderedDict[Tuple[str, int], bool] = OrderedDict()
-        # set of (chat_id, msg_id) tuples that have been discarded (item 4)
-        self._discarded_messages: set = set()
+        # (chat_id, msg_id) tuples that have been discarded (LRU bounded)
+        self._discarded_messages: OrderedDict[int, None] = OrderedDict()
 
     def send_gate_open(self, chat_id: str) -> bool:
         """Return True if a RetryAfter gate is currently active for this chat (item 2).
@@ -138,7 +137,10 @@ class EditCoordinator:
         if msg_id is None:
             return
         chat_id = self._extract_chat_id(message)
-        self._discarded_messages.add(msg_id)
+        self._discarded_messages[msg_id] = None
+        self._discarded_messages.move_to_end(msg_id)
+        while len(self._discarded_messages) > self._LRU_MAX_ENTRIES:
+            self._discarded_messages.popitem(last=False)
         # Drop any pending edit for this message
         if chat_id and chat_id in self._pending_edits:
             self._pending_edits[chat_id].pop(msg_id, None)

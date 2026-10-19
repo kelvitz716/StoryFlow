@@ -24,23 +24,25 @@ class RateLimiter:
     
     def wait_if_needed(self) -> None:
         """Block if rate limit would be exceeded."""
-        with self.lock:
-            now = time.time()
-            
-            # Remove requests outside time window
-            while self.requests and self.requests[0] < now - self.time_window:
-                self.requests.popleft()
-            
-            # Check if we need to wait
-            if len(self.requests) >= self.max_requests:
-                sleep_time = self.time_window - (now - self.requests[0])
-                if sleep_time > 0:
-                    logging.info(f"⏳ Rate limit reached. Waiting {sleep_time:.1f}s...")
-                    time.sleep(sleep_time)
+        while True:
+            sleep_time = 0
+            with self.lock:
+                now = time.time()
+                # Remove requests outside time window
+                while self.requests and self.requests[0] < now - self.time_window:
                     self.requests.popleft()
-            
-            # Record this request
-            self.requests.append(time.time())
+                
+                # Check if we need to wait
+                if len(self.requests) >= self.max_requests:
+                    sleep_time = self.time_window - (now - self.requests[0])
+                else:
+                    # Slot available: claim immediately inside lock
+                    self.requests.append(now)
+                    return
+
+            if sleep_time > 0:
+                logging.info(f"⏳ Rate limit reached. Waiting {sleep_time:.1f}s...")
+                time.sleep(sleep_time)
     
     def get_remaining(self) -> int:
         """Get remaining requests in current window."""

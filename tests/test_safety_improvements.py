@@ -147,3 +147,58 @@ async def test_admin_2fa_password_message_deleted():
     # 3. Confirmation message sent
     update.effective_chat.send_message.assert_called_once()
     assert "deleted from chat" in update.effective_chat.send_message.call_args[0][0]
+
+
+def test_rate_limiter_allows_and_blocks():
+    """Verify rate limiter allows up to max_requests and paces execution."""
+    from core.rate_limiter import RateLimiter
+    import time
+
+    rl = RateLimiter(max_requests=2, time_window=1)
+    t0 = time.time()
+    rl.wait_if_needed()
+    rl.wait_if_needed()
+    # 2 requests fired immediately
+    assert time.time() - t0 < 0.5
+    assert rl.get_remaining() == 0
+
+
+def test_edit_gate_discarded_messages_lru_bounded():
+    """Verify _discarded_messages does not grow beyond _LRU_MAX_ENTRIES."""
+    from bot.edit_gate import EditCoordinator
+
+    coord = EditCoordinator()
+    dummy_msg = MagicMock()
+    dummy_msg.chat_id = 12345
+    limit = coord._LRU_MAX_ENTRIES
+
+    for i in range(limit + 50):
+        dummy_msg.message_id = i
+        coord.discard(dummy_msg)
+
+    assert len(coord._discarded_messages) == limit
+    # Oldest 50 messages were evicted
+    assert 0 not in coord._discarded_messages
+    assert (limit + 49) in coord._discarded_messages
+
+
+def test_save_cookie_file_sets_0600_permissions():
+    """Verify saved cookie file has 0600 permissions."""
+    import stat
+    from auth.cookies import CookieManager
+
+    with tempfile.TemporaryDirectory() as cookie_dir:
+        cm = CookieManager(cookie_path=cookie_dir)
+        with tempfile.NamedTemporaryFile("w", delete=False) as tf:
+            tf.write("# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tFALSE\t2000000000\tsessionid\tabc\n")
+            src_file = tf.name
+
+        try:
+            res = cm.save_cookie_file(user_id="123456", platform="instagram", file_path=src_file)
+            assert res["success"] is True
+            cookie_path = res["cookie_file"]
+            mode = os.stat(cookie_path).st_mode & 0o777
+            assert mode == (stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        finally:
+            if os.path.exists(src_file):
+                os.remove(src_file)

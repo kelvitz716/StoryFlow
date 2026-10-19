@@ -9,7 +9,6 @@ This module provides filters to redact sensitive information like:
 
 import re
 import logging
-from typing import Pattern
 
 
 class SensitiveDataFilter(logging.Filter):

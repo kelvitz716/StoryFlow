@@ -5,12 +5,12 @@ import logging
 import os
 import time
 import shutil
-from core.storage import is_storage_critical, format_storage_report
+from core.storage import is_storage_critical
 from core.database import db
 from core.config import _env_int, _env_float
 from downloaders.registry import DownloaderRegistry
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Optional, Callable
 from enum import Enum
 from datetime import datetime
 import uuid

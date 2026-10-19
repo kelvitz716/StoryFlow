@@ -17,7 +17,7 @@ import json
 import logging
 import asyncio
 import requests
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional
 
 from core.rate_limiter import RateLimiter
 from core.config import _env_int
@@ -319,12 +319,12 @@ class SnapchatDownloader(BaseDownloader):
                 f"snapchat_{safe_username}_{ts}_{index}.{extension}",
             )
 
-            response = self.session.get(media_url, stream=True, timeout=60)
-            response.raise_for_status()
+            with self.session.get(media_url, stream=True, timeout=60) as response:
+                response.raise_for_status()
 
-            with open(filename, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                with open(filename, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
 
             return filename
 

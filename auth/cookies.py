@@ -59,8 +59,12 @@ class CookieManager:
                 f"{s_platform}_{s_user_id}.txt"
             )
             
-            # Copy file
+            # Copy file and enforce 0600 permissions
             shutil.copy2(file_path, dest_file)
+            try:
+                os.chmod(dest_file, 0o600)
+            except OSError as e:
+                logging.debug(f"Could not set 0600 on {dest_file}: {e}")
             
             masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
             logging.info(f"✅ Cookie file saved for user {masked_user}")
