@@ -197,6 +197,29 @@ class TestHandleDocumentGuards:
         # save_cookie_file must never be called
         cm.save_cookie_file.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_non_txt_document_silently_ignored(self):
+        """Non-.txt documents (like GIFs or videos) must be silently ignored even if large."""
+        from bot.handlers import handle_document
+        from auth.cookies import CookieManager
+
+        am = _make_access_manager(admin_id="9999", allowed=["1111"])
+        cm = MagicMock(spec=CookieManager)
+
+        update = _make_update("1111", chat_type="supergroup")
+        update.message.document = MagicMock()
+        update.message.document.file_size = 5 * 1024 * 1024  # 5 MB GIF
+        update.message.document.file_name = "funny_animation.gif"
+        update.message.document.get_file = AsyncMock()
+        update.message.reply_text = AsyncMock()
+
+        ctx = _make_context()
+        await handle_document(update, ctx, cm, am)
+
+        # Must not reply or complain about cookie file size
+        update.message.reply_text.assert_not_called()
+        update.message.document.get_file.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Item 7 — purge_confirm keyboard builds without NameError

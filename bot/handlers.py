@@ -574,6 +574,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
         return
 
     document = update.message.document
+    if not document:
+        return
+
+    # Silently ignore non-.txt documents (like GIFs, stickers, media files)
+    if not document.file_name or not document.file_name.endswith('.txt'):
+        return
+
     user_id = str(update.effective_user.id)
 
     # Reject oversized or missing file size BEFORE downloading (item 6)
@@ -586,19 +593,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE, co
 
     awaiting_platform = context.user_data.get('awaiting_cookies')
     if not awaiting_platform:
-        # Silently ignore non-.txt documents (like media files uploaded by MTProto)
-        if not document.file_name or not document.file_name.endswith('.txt'):
-            return
-
         await update.message.reply_text("📎 I wasn't expecting a cookie file. Go to 'Manage Cookies' first.")
         return
 
     # Clear the awaiting state immediately so re-sending a file works cleanly
     context.user_data.pop('awaiting_cookies', None)
-
-    if not document.file_name or not document.file_name.endswith('.txt'):
-        await update.message.reply_text("❌ Please send a .txt file.")
-        return
     
     status_msg = await update.message.reply_text(f"⏳ Processing {awaiting_platform.title()} cookies...")
     
