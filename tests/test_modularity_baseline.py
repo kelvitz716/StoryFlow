@@ -107,7 +107,7 @@ async def test_queue_dispatches_snapchat_spotlight_to_gallery_dl(tmp_path):
     queue.download_path = str(tmp_path / "out")
 
     upload_mock = AsyncMock()
-    job = await queue.submit(
+    await queue.submit(
         user_id="123",
         url="https://snapchat.com/spotlight/12345678",
         platform="Snapchat",
@@ -146,7 +146,7 @@ async def test_queue_dispatches_instagram_to_gallery_dl(tmp_path):
     queue.download_path = str(tmp_path / "out")
 
     upload_mock = AsyncMock()
-    job = await queue.submit(
+    await queue.submit(
         user_id="123",
         url="https://www.instagram.com/reel/123",
         platform="Instagram",
