@@ -105,5 +105,11 @@ async def handle_auth_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         else:
             await update.message.reply_text("❌ Invalid code.")
     elif AUTH_TYPE == 'password':
-        AUTH_PENDING.set_result(text)
-        await update.message.reply_text("✅ Password accepted.")
+        if not AUTH_PENDING.done():
+            AUTH_PENDING.set_result(text)
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        if update.effective_chat:
+            await update.effective_chat.send_message("✅ Password accepted and deleted from chat.")

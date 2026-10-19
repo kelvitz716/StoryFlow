@@ -228,7 +228,20 @@ class BaseDownloader:
                     }
                 else:
                     raise ValueError(f"Process failed with exit code {returncode}")
-
+            except asyncio.CancelledError:
+                if process and process.returncode is None:
+                    try:
+                        pgid = os.getpgid(process.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        pass
+                if stderr_task and not stderr_task.done():
+                    stderr_task.cancel()
+                    try:
+                        await stderr_task
+                    except asyncio.CancelledError:
+                        pass
+                raise
             except (ValueError, TimeoutError) as e:
                 error_msg = str(e)
                 last_stderr_text = stderr_text

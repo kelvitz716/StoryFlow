@@ -215,7 +215,7 @@ class MTProtoClient:
         if self.code_callback:
             logging.info("📲 Requesting authentication code via callback...")
             code = await self.code_callback()
-            logging.debug(f"✅ Code received from callback")
+            logging.debug("✅ Code received from callback")
             return code
         else:
             # Fallback to console input (shouldn't happen in bot mode)
@@ -227,7 +227,7 @@ class MTProtoClient:
         if self.password_callback:
             logging.info("🔐 Requesting 2FA password via callback...")
             password = await self.password_callback()
-            logging.debug(f"✅ Password received from callback")
+            logging.debug("✅ Password received from callback")
             return password
         else:
             # Fallback to console input (shouldn't happen in bot mode)
@@ -294,7 +294,7 @@ class MTProtoClient:
                     progress=progress_callback or self._default_progress
                 )
             
-            logging.info(f"✅ MTProto upload complete!")
+            logging.info("✅ MTProto upload complete!")
             return True
             
         except Exception as e:
@@ -355,6 +355,11 @@ class MTProtoClient:
                     return True
                 except FloodWait as e:
                     logging.warning(f"⚠️ MTProto FloodWait: Sleeping {e.value}s (Attempt {attempt+1}/3)")
+                    for f in file_handles:
+                        try:
+                            f.seek(0)
+                        except Exception:
+                            pass
                     await asyncio.sleep(e.value)
                 except Exception as e:
                     logging.error(f"❌ MTProto media group failed: {e}")
@@ -371,7 +376,7 @@ class MTProtoClient:
     async def _default_progress(self, current, total):
         """Default progress callback for uploads."""
         try:
-            percent = current * 100 / total
+            percent = (current * 100 / total) if total > 0 else 0
             # Log every 10% to avoid spam
             if int(percent) % 10 == 0 and int(percent) > 0:
                 logging.info(f"📤 Uploading: {percent:.1f}% ({current/1024/1024:.1f}/{total/1024/1024:.1f} MB)")
@@ -386,7 +391,6 @@ _mtproto_client: Optional[MTProtoClient] = None
 
 def get_mtproto_client() -> Optional[MTProtoClient]:
     """Get the global MTProto client instance."""
-    global _mtproto_client
     return _mtproto_client
 
 
@@ -405,7 +409,7 @@ async def init_mtproto() -> Optional[MTProtoClient]:
         logging.info("ℹ️ MTProto not configured (optional - for files >50MB)")
         return None
     
-    success = await _mtproto_client.start()
+    await _mtproto_client.start()
     
     # Return client even if not connected (for on-demand auth later)
     return _mtproto_client

@@ -14,9 +14,12 @@ def get_storage_info(path: str = ".") -> Dict[str, any]:
     """
     try:
         # Use the parent directory if path doesn't exist yet
-        check_path = path
-        while not os.path.exists(check_path) and check_path != "/":
-            check_path = os.path.dirname(check_path)
+        check_path = os.path.abspath(path or ".")
+        while not os.path.exists(check_path):
+            parent = os.path.dirname(check_path)
+            if parent == check_path:
+                break
+            check_path = parent
             
         total, used, free = shutil.disk_usage(check_path)
         percent = (used / total) * 100

@@ -31,7 +31,8 @@ class GalleryDLDownloader(BaseDownloader):
         """
         super().__init__(output_path)
         self.cookie_path = cookie_path
-        self.admin_id = admin_id
+        self.admin_ids = [aid.strip() for aid in str(admin_id).split(",") if aid.strip()] if admin_id else []
+        self.admin_id = self.admin_ids[0] if self.admin_ids else (str(admin_id) if admin_id else None)
         os.makedirs(cookie_path, exist_ok=True)
     
     async def download(self, url: str, platform: str, user_id: Optional[str] = None, job_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
@@ -93,8 +94,6 @@ class GalleryDLDownloader(BaseDownloader):
                 return result
 
             # 2. When download without cookies fails, retry with best available cookie.
-            # Always try admin/default fallback here — the first attempt already failed
-            # without credentials, so using any cookie is safe regardless of ALLOW_ADMIN_COOKIE_FALLBACK.
             retry_cookie = cookie_file or self._get_any_cookie(platform)
             if retry_cookie:
                 logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(retry_cookie)}...")
@@ -272,7 +271,13 @@ class GalleryDLDownloader(BaseDownloader):
         platform_lower = re.sub(r'[^\w\-]', '', platform.lower()) or 'unknown'
 
         # 1. Admin cookie
-        if self.admin_id:
+        if self.admin_ids:
+            for aid in self.admin_ids:
+                s_admin = re.sub(r'[^\w\-]', '', str(aid)) or 'unknown'
+                admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
+                if os.path.exists(admin_cookie):
+                    return admin_cookie
+        elif self.admin_id:
             s_admin = re.sub(r'[^\w\-]', '', str(self.admin_id)) or 'unknown'
             admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
             if os.path.exists(admin_cookie):
@@ -318,12 +323,14 @@ class GalleryDLDownloader(BaseDownloader):
                 return user_cookie
 
         # 2. Admin Fallback — only when explicitly opted in
-        if _ALLOW_ADMIN_COOKIE_FALLBACK and self.admin_id and self.admin_id != user_id:
-            s_admin = _sanitize_id(self.admin_id)
-            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
-            if os.path.exists(admin_cookie):
-                logging.info(f"💡 using Admin cookies for {platform} (Fallback)")
-                return admin_cookie
+        if _ALLOW_ADMIN_COOKIE_FALLBACK and self.admin_ids:
+            for aid in self.admin_ids:
+                if str(aid) != str(user_id):
+                    s_admin = _sanitize_id(aid)
+                    admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
+                    if os.path.exists(admin_cookie):
+                        logging.info(f"💡 using Admin cookies for {platform} (Fallback)")
+                        return admin_cookie
 
         # 3. Legacy Default
         default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
