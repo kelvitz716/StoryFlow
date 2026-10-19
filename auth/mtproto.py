@@ -205,7 +205,7 @@ class MTProtoClient:
             if self.client:
                 try:
                     await self.client.disconnect()
-                except:
+                except Exception:
                     pass
             return False
     
@@ -380,8 +380,8 @@ class MTProtoClient:
             # Log every 10% to avoid spam
             if int(percent) % 10 == 0 and int(percent) > 0:
                 logging.info(f"📤 Uploading: {percent:.1f}% ({current/1024/1024:.1f}/{total/1024/1024:.1f} MB)")
-        except:
-            pass
+        except Exception as e:
+            logging.debug(f"Progress callback error: {e}")
 
 
 
