@@ -7,6 +7,7 @@ import logging
 from collections import deque
 from typing import Optional, Callable, Dict
 from core.queue import _env_int
+from utils.log_sanitizer import sanitize_string
 
 # Wall-clock timeout for every subprocess call (seconds).
 _DOWNLOAD_TIMEOUT = _env_int('DOWNLOAD_TIMEOUT_SECONDS', 600, 10, 86400)
@@ -103,6 +104,7 @@ class BaseDownloader:
         - Raw stderr is NEVER returned in result dicts; only generic messages
           are surfaced to callers. Full stderr is logged at DEBUG level.
         """
+        last_stderr_text = ""
         for attempt in range(1, max_attempts + 1):
             process = None
             stderr_task = None
@@ -222,6 +224,7 @@ class BaseDownloader:
 
             except (ValueError, TimeoutError) as e:
                 error_msg = str(e)
+                last_stderr_text = stderr_text
 
                 # Make sure stderr_task is cleaned up if still running
                 if stderr_task and not stderr_task.done():
@@ -290,6 +293,10 @@ class BaseDownloader:
                     await asyncio.sleep(wait_time)
                     continue
 
+                if stderr_text:
+                    tail = sanitize_string(stderr_text[-500:])
+                    logging.warning(f"Final failure for {process_name} after {attempt}/{max_attempts} attempts. Stderr tail: {tail}")
+
                 return {
                     'success': False,
                     'error': f'Download failed (code {returncode if returncode is not None else "?"})',
@@ -309,6 +316,10 @@ class BaseDownloader:
                     'error': 'Internal error during download',
                     'platform': process_name
                 }
+
+        if last_stderr_text:
+            tail = sanitize_string(last_stderr_text[-500:])
+            logging.warning(f"Final failure for {process_name} after {max_attempts} attempts. Stderr tail: {tail}")
 
         return {
             'success': False,
