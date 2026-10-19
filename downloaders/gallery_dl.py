@@ -17,6 +17,26 @@ _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false')
 
 from downloaders.base import BaseDownloader
 
+
+def _mask_cookie_filename(filename: Optional[str]) -> str:
+    """Mask user_id in cookie filenames (e.g. tiktok_618026357.txt -> tiktok_618***357.txt)."""
+    if not filename:
+        return ""
+    base = os.path.basename(filename)
+    if "_" in base and "." in base:
+        parts = base.split("_", 1)
+        platform_part = parts[0]
+        rest = parts[1]
+        if "." in rest:
+            uid_part, ext = rest.rsplit(".", 1)
+            if len(uid_part) > 6:
+                masked_uid = f"{uid_part[:3]}***{uid_part[-3:]}"
+            else:
+                masked_uid = "***"
+            return f"{platform_part}_{masked_uid}.{ext}"
+    return base
+
+
 class GalleryDLDownloader(BaseDownloader):
     """Handler for general media downloads using gallery-dl."""
     
@@ -96,7 +116,7 @@ class GalleryDLDownloader(BaseDownloader):
             # 2. When download without cookies fails, retry with best available cookie.
             retry_cookie = cookie_file or self._get_any_cookie(platform)
             if retry_cookie:
-                logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(retry_cookie)}...")
+                logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {_mask_cookie_filename(retry_cookie)}...")
                 command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True, cookie_override=retry_cookie)
                 result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback)
 
@@ -176,7 +196,7 @@ class GalleryDLDownloader(BaseDownloader):
             # Add cookies if available
             cookie_file = cookie_override or self._get_cookie_file(platform, user_id)
             if cookie_file:
-                logging.info(f"🍪 Using {platform} cookies with yt-dlp: {os.path.basename(cookie_file)}")
+                logging.info(f"🍪 Using {platform} cookies with yt-dlp: {_mask_cookie_filename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
 
             # URL must come after '--' to prevent argument injection
@@ -251,7 +271,7 @@ class GalleryDLDownloader(BaseDownloader):
             # Prefer explicit override (e.g., admin/default cookie for retry path)
             cookie_file = cookie_override or self._get_cookie_file(platform, user_id)
             if cookie_file:
-                logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
+                logging.info(f"🍪 Using {platform} cookies: {_mask_cookie_filename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
             else:
                 # Only warn if it's a platform that typically needs cookies

@@ -442,3 +442,57 @@ async def test_purge_execution_callback_displays_recovered_space():
         assert "Recovered `2.0 MB` (1 item)" in call_text
         assert not os.path.exists(sample_file)
 
+
+def test_mask_cookie_filename():
+    """Verify _mask_cookie_filename masks user IDs in cookie filenames."""
+    from downloaders.gallery_dl import _mask_cookie_filename
+
+    assert _mask_cookie_filename("tiktok_618026357.txt") == "tiktok_618***357.txt"
+    assert _mask_cookie_filename("instagram_123.txt") == "instagram_***.txt"
+    assert _mask_cookie_filename("facebook.txt") == "facebook.txt"
+    assert _mask_cookie_filename(None) == ""
+
+
+def test_log_sanitizer_redacts_cookie_filenames():
+    """Verify SensitiveDataFilter redacts user IDs in cookie filenames."""
+    from utils.log_sanitizer import SensitiveDataFilter
+
+    flt = SensitiveDataFilter()
+    msg = "Using TikTok cookies: tiktok_618026357.txt"
+    sanitized = flt.sanitize(msg)
+    assert "618026357" not in sanitized
+    assert "tiktok_***.txt" in sanitized
+
+
+@pytest.mark.asyncio
+async def test_livestream_offline_error_classification():
+    """Verify base downloader detects offline/ended livestream in stderr and returns clean error."""
+    from downloaders.base import BaseDownloader
+
+    dl = BaseDownloader(output_path="./downloads")
+
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stdout.readline = AsyncMock(side_effect=[b"", b""])
+        proc.stderr.read = AsyncMock(side_effect=[b"ERROR: [tiktok:live] jackiewanjira: The channel is not currently live\n", b""])
+        proc.wait = AsyncMock(return_value=0)
+        mock_exec.return_value = proc
+
+        res = await dl._execute_with_retry(['yt-dlp', 'https://tiktok.com/@user/live'])
+
+        assert res['success'] is False
+        assert res['error'] == 'Livestream is offline'
+        assert 'not currently live' in res['details']
+
+
+def test_format_error_message_livestream_hint():
+    """Verify format_error_message provides helpful hint for offline livestreams."""
+    from utils.bot_utils import format_error_message
+
+    msg = format_error_message("Livestream is offline", "TikTok")
+    assert "❌ *TikTok Error*" in msg
+    assert "Livestream is offline" in msg
+    assert "The livestream is offline or has ended" in msg
+
+

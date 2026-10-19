@@ -287,6 +287,22 @@ class BaseDownloader:
                         'returncode': returncode
                     }
 
+                # Check for live stream / offline stream
+                if (
+                    'not currently live' in stderr_lower
+                    or 'is not live' in stderr_lower
+                    or 'live stream has ended' in stderr_lower
+                    or 'live stream is offline' in stderr_lower
+                    or 'live event has ended' in stderr_lower
+                ):
+                    return {
+                        'success': False,
+                        'error': 'Livestream is offline',
+                        'details': 'This livestream has ended or the channel is not currently live.',
+                        'platform': process_name,
+                        'returncode': returncode
+                    }
+
                 # Exit code 64 = extractor failure (gallery-dl)
                 if returncode == 64:
                     return {
