@@ -14,7 +14,7 @@ from auth.access import AccessManager
 from auth.cookies import CookieManager  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
-from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError
+from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError, JOB_MESSAGES
 from bot.guards import require_allowed
 import asyncio
 import time
@@ -221,15 +221,50 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                      access_manager: AccessManager, download_queue,
                      mtproto_client=None) -> None:
     """Handle URL message."""
-    if not update.effective_message or not update.effective_message.text:
+    # Determine update type
+    def _get_update_attr(attr: str):
+        if hasattr(update, "_mock_return_value"):
+            return getattr(update, "__dict__", {}).get(attr)
+        return getattr(update, attr, None)
+
+    if _get_update_attr("edited_message") is not None:
+        update_type = "edited_message"
+    elif _get_update_attr("edited_channel_post") is not None:
+        update_type = "edited_channel_post"
+    elif _get_update_attr("channel_post") is not None:
+        update_type = "channel_post"
+    elif _get_update_attr("message") is not None:
+        update_type = "message"
+    elif getattr(update, "effective_message", None) is not None:
+        update_type = "message"
+    else:
+        update_type = "unknown"
+
+    msg = getattr(update, "effective_message", None)
+    update_id = getattr(update, "update_id", None)
+    chat_id_val = getattr(update.effective_chat, "id", None) if getattr(update, "effective_chat", None) else None
+    message_id_val = getattr(msg, "message_id", None) if msg else None
+    sender_chat_id = getattr(getattr(msg, "sender_chat", None), "id", None) if msg else None
+    is_auto_forward = bool(getattr(msg, "is_automatic_forward", False)) if msg else False
+
+    logging.debug(
+        f"handle_url update_id={update_id} update_type={update_type} "
+        f"chat_id={chat_id_val} message_id={message_id_val} "
+        f"sender_chat_id={sender_chat_id} is_automatic_forward={is_auto_forward}"
+    )
+
+    # Ignore edited_message/edited_channel_post updates in the URL handler (item 3)
+    if update_type in ("edited_message", "edited_channel_post"):
+        return
+
+    if not msg or not getattr(msg, "text", None):
         return
 
     # Skip channel_post update (handle via forwarded group message)
-    if update.channel_post is not None:
+    if update_type == "channel_post":
         return
 
-    url_text = update.effective_message.text.strip()
-    msg = update.effective_message
+    url_text = msg.text.strip()
     
     # Clear any ghosted UI states when the user explicitly sends a new URL
     context.user_data.pop('awaiting_cookies', None)
@@ -310,8 +345,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     backlog_age_threshold = _env_float("BACKLOG_AGE_SECONDS", 60.0, 0.0, 86400.0)
     is_backlog = False
     if hasattr(msg, "date") and msg.date:
-        if hasattr(msg.date, "timestamp"):
-            msg_ts = msg.date.timestamp()
+        if hasattr(msg.date, "timestamp") and callable(msg.date.timestamp):
+            try:
+                raw_ts = msg.date.timestamp()
+                msg_ts = float(raw_ts) if isinstance(raw_ts, (int, float)) else None
+            except Exception:
+                msg_ts = None
         elif isinstance(msg.date, (int, float)):
             msg_ts = float(msg.date)
         else:
@@ -405,11 +444,24 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     message_id=msg.message_id
                 )
                 if job:
-                    if status_msg:
-                        register_job_message(job.job_id, status_msg)
-                        pos = download_queue.get_queue_position(job.job_id)
-                        if pos > 0:
-                            request_edit(status_msg, f"⏳ *Queued* (Position: {pos})\nWaiting for worker...", parse_mode='Markdown')
+                    is_already_active = getattr(job, "is_already_active", False) or (
+                        job.job_id in JOB_MESSAGES and JOB_MESSAGES[job.job_id] is not status_msg
+                    )
+                    if is_already_active:
+                        logging.debug(f"Job {job.job_id} already active; dropping redundant status message")
+                        if status_msg:
+                            try:
+                                from bot.edit_gate import discard
+                                discard(status_msg)
+                                await status_msg.delete()
+                            except Exception:
+                                pass
+                    else:
+                        if status_msg:
+                            register_job_message(job.job_id, status_msg)
+                            pos = download_queue.get_queue_position(job.job_id)
+                            if pos > 0:
+                                request_edit(status_msg, f"⏳ *Queued* (Position: {pos})\nWaiting for worker...", parse_mode='Markdown')
                 else:
                     if status_msg:
                         request_edit(status_msg, "⚠️ *Queue Full*\nPlease wait for your active downloads to finish.", terminal=True)

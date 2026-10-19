@@ -39,6 +39,7 @@ class DownloadJob:
     created_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     job_dir: Optional[str] = None
+    is_already_active: bool = False
     
     def to_dict(self) -> Dict:
         return {
@@ -171,6 +172,7 @@ class DownloadQueue:
         for existing_job in active_jobs:
             if existing_job.url == url:
                 logging.info(f"♻️ Job {existing_job.job_id} already active for URL: {url} (User: {user_id})")
+                existing_job.is_already_active = True
                 return existing_job
 
         job_id = str(uuid.uuid4())[:8]
