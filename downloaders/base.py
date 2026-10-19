@@ -142,8 +142,11 @@ class BaseDownloader:
                             if line_text:
                                 # Parse progress
                                 if progress_callback:
+                                    # Ensure progress text never surfaces a URL or query string
+                                    if line_text.lower().startswith('http') or '://' in line_text:
+                                        pass
                                     # yt-dlp style: [download]  23.5% of ...
-                                    if "[download]" in line_text and "%" in line_text:
+                                    elif "[download]" in line_text and "%" in line_text:
                                         try:
                                             parts = line_text.split()
                                             percent = next((p for p in parts if "%" in p), "0%")
@@ -158,8 +161,11 @@ class BaseDownloader:
                                     # gallery-dl style (usually just filenames)
                                     elif line_text.startswith('#'):
                                         pass
-                                    elif "." in line_text and "/" in line_text:
-                                        progress_callback(f"Downloading: {os.path.basename(line_text)}")
+                                    elif "." in line_text and ("/" in line_text or "\\" in line_text):
+                                        if '?' not in line_text and not line_text.lower().startswith('http') and '://' not in line_text:
+                                            base = os.path.basename(line_text)
+                                            if base and '?' not in base and not base.lower().startswith('http'):
+                                                progress_callback(f"Downloading: {base}")
 
                                 # Store at most the last 200 lines (or 64 KB)
                                 if len(line_text) > _STDOUT_MAX_BYTES:
