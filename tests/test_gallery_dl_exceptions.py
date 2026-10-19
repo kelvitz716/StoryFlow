@@ -232,3 +232,56 @@ async def test_instagram_redirect_to_login_triggers_auth_error():
         assert res["error"] == "Authentication required"
         assert res["details"] == "This content needs a logged-in session. Ask the admin to add cookies for this platform."
         assert res["returncode"] == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("msg", [
+    b"ERROR: [Instagram] DeqKnfVxiqD: This content isn't available to everyone: It can't be seen by certain audiences.\n",
+    b"ERROR: [youtube] 12345: Sign in to confirm your age\n",
+    b"ERROR: This video is age-restricted and requires login\n",
+    b"ERROR: Restricted content cannot be viewed\n",
+])
+async def test_age_and_audience_restricted_triggers_auth_error(msg):
+    """Audience and age-restricted messages trigger auth error with cookie guidance."""
+    dl = BaseDownloader(output_path="./downloads")
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
+        proc = mock.MagicMock()
+        proc.returncode = 1
+        proc.stdout.readline = mock.AsyncMock(side_effect=[b"", b""])
+        proc.stderr.read = mock.AsyncMock(side_effect=[msg, b""])
+        proc.wait = mock.AsyncMock(return_value=0)
+        mock_exec.return_value = proc
+
+        res = await dl._execute_with_retry(["dummy"], "yt-dlp", max_attempts=1)
+        assert res["success"] is False
+        assert res["error"] == "Authentication required"
+        assert res["details"] == "This content needs a logged-in session. Ask the admin to add cookies for this platform."
+
+
+@pytest.mark.asyncio
+async def test_download_retries_with_cookies_on_gallery_dl_failure():
+    """Verify download tries without cookies first, then retries gallery-dl with cookies."""
+    from downloaders.gallery_dl import GalleryDLDownloader
+    import unittest.mock as mock
+
+    dl = GalleryDLDownloader(output_path="./downloads", cookie_path="./cookies")
+    dl._get_cookie_file = mock.MagicMock(return_value="/path/to/cookies.txt")
+
+    # First attempt (without cookies) fails, second attempt (with cookies) succeeds
+    fail_res = {'success': False, 'error': 'Download failed'}
+    succ_res = {'success': True, 'stdout': 'ok'}
+
+    with mock.patch.object(dl, '_execute_with_retry', side_effect=[fail_res, succ_res]) as mock_exec, \
+         mock.patch.object(dl, '_get_download_files', side_effect=[set(), set(), {'/path/file.mp4'}, {'/path/file.mp4'}]):
+
+        res = await dl.download("https://instagram.com/p/test", "Instagram", user_id="123")
+        assert res['success'] is True
+        assert mock_exec.call_count == 2
+        # First call was without cookies
+        first_call_cmd = mock_exec.call_args_list[0][0][0]
+        assert '--cookies' not in first_call_cmd
+        # Second call was with cookies
+        second_call_cmd = mock_exec.call_args_list[1][0][0]
+        assert '--cookies' in second_call_cmd

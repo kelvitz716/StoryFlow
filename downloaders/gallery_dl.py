@@ -2,7 +2,6 @@
 
 import os
 import re
-import time
 import asyncio
 import logging
 from typing import Dict, Optional, Callable
@@ -56,7 +55,10 @@ class GalleryDLDownloader(BaseDownloader):
             # Get list of files before download (only in this job's folder)
             files_before = self._get_download_files(job_output_path)
             
-            command = self._build_command(url, platform, user_id, job_output_path)
+            cookie_file = self._get_cookie_file(platform, user_id)
+            
+            # 1. Try download without cookies first
+            command = self._build_command(url, platform, user_id, job_output_path, use_cookies=False)
             
             logging.info(f"📥 Downloading {platform} content via gallery-dl...")
             logging.debug(f"Command: {' '.join(command)}")
@@ -75,7 +77,6 @@ class GalleryDLDownloader(BaseDownloader):
                     return result
                 
                 # Check for cached files (if any were already in the folder)
-                # Since we use a unique folder, any file here belongs to this job.
                 if files_after:
                     logging.info(f"📂 Found {len(files_after)} files in the job directory")
                     result['files'] = list(files_after)
@@ -85,14 +86,38 @@ class GalleryDLDownloader(BaseDownloader):
             
             # Check for partial success (files downloaded despite error)
             if new_files:
-                # TikTok specific: Images often download fine but audio fails. Treat this as success/feature.
                 logging.info(f"✅ {platform} images downloaded successfully (despite stderr)")
                 result['success'] = True
                 result['files'] = new_files
                 result['message'] = "Downloads completed (with some errors)"
                 return result
+
+            # 2. When download without cookies fails, retry first with cookie (if available)
+            if cookie_file:
+                logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(cookie_file)}...")
+                command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True)
+                result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback)
+
+                files_after = self._get_download_files(job_output_path)
+                new_files = [f for f in files_after if f not in files_before]
+
+                if result['success']:
+                    if new_files:
+                        logging.info(f"✅ {platform} content downloaded successfully with cookies! ({len(new_files)} files)")
+                        result['files'] = new_files
+                        return result
+                    if files_after:
+                        logging.info(f"📂 Found {len(files_after)} files in the job directory")
+                        result['files'] = list(files_after)
+                        return result
+
+                if new_files:
+                    logging.info(f"✅ {platform} images downloaded successfully with cookies")
+                    result['success'] = True
+                    result['files'] = new_files
+                    return result
                 
-            # Try yt-dlp as fallback for supported platforms
+            # 3. If that fails too, retry with yt-dlp (which automatically uses cookies if available)
             fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram", "Generic"]
             if platform in fallback_platforms:
                 logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
@@ -141,7 +166,7 @@ class GalleryDLDownloader(BaseDownloader):
                 '-o', output_template,
                 '--no-warnings',
                 '--no-playlist',
-                f'--max-filesize', f'{_MAX_FILE_SIZE_MB}m',
+                '--max-filesize', f'{_MAX_FILE_SIZE_MB}m',
             ]
             
             # Add cookies if available
@@ -184,11 +209,7 @@ class GalleryDLDownloader(BaseDownloader):
                         'platform': platform
                     }
             else:
-                 return {
-                    'success': False,
-                    'error': 'Download failed',
-                    'platform': platform
-                }
+                return result
                 
         except asyncio.TimeoutError:
             return {
@@ -212,7 +233,7 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str) -> list:
+    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str, use_cookies: bool = True) -> list:
         """Build gallery-dl command with appropriate options."""
         command = [
             'gallery-dl',
@@ -222,14 +243,15 @@ class GalleryDLDownloader(BaseDownloader):
         ]
         
         # Add cookie support
-        cookie_file = self._get_cookie_file(platform, user_id)
-        if cookie_file:
-            logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
-            command.extend(['--cookies', cookie_file])
-        else:
-            # Only warn if it's a platform that typically needs cookies
-            if platform in ["Instagram", "Facebook", "TikTok"]:
-                logging.debug(f"⚠️ No cookies found for {platform}")
+        if use_cookies:
+            cookie_file = self._get_cookie_file(platform, user_id)
+            if cookie_file:
+                logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
+                command.extend(['--cookies', cookie_file])
+            else:
+                # Only warn if it's a platform that typically needs cookies
+                if platform in ["Instagram", "Facebook", "TikTok"]:
+                    logging.debug(f"⚠️ No cookies found for {platform}")
 
         # URL must come after '--' to prevent argument injection
         command.extend(['--', url])
