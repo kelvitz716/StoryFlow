@@ -304,3 +304,141 @@ def test_cookie_manager_list_cookies_uses_mtime_cache():
         cookies2 = cm.list_cookies("user123")
         assert len(cookies2) == 1
         assert cm._expiry_cache[cookie_file] == cached_tuple
+
+
+def test_format_size_units():
+    """Verify format_size correctly formats bytes across different unit scales."""
+    from core.storage import format_size
+
+    assert format_size(0) == "0 B"
+    assert format_size(-10) == "0 B"
+    assert format_size(512) == "512 B"
+    assert format_size(1024) == "1.0 KB"
+    assert format_size(1536) == "1.5 KB"
+    assert format_size(1024 * 1024) == "1.0 MB"
+    assert format_size(1024 * 1024 * 124.5) == "124.5 MB"
+    assert format_size(1024 * 1024 * 1024 * 2.5) == "2.5 GB"
+
+
+def test_get_directory_size_nested():
+    """Verify get_directory_size recursively calculates byte size and top-level item count."""
+    from core.storage import get_directory_size
+
+    with tempfile.TemporaryDirectory() as dl_dir:
+        # Empty directory
+        size, count = get_directory_size(dl_dir)
+        assert size == 0
+        assert count == 0
+
+        # Create top-level file (100 bytes)
+        file1 = os.path.join(dl_dir, "file1.txt")
+        with open(file1, "wb") as f:
+            f.write(b"x" * 100)
+
+        # Create top-level subdirectory with 2 nested files (300 bytes total)
+        subdir = os.path.join(dl_dir, "job_12345678")
+        os.makedirs(subdir, exist_ok=True)
+        file2 = os.path.join(subdir, "video.mp4")
+        with open(file2, "wb") as f:
+            f.write(b"y" * 200)
+        file3 = os.path.join(subdir, "thumb.jpg")
+        with open(file3, "wb") as f:
+            f.write(b"z" * 100)
+
+        # Total size = 100 + 200 + 100 = 400 bytes, top-level items = 2 (file1 + subdir)
+        size, count = get_directory_size(dl_dir)
+        assert size == 400
+        assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_purge_confirm_callback_displays_space_to_recover():
+    """Verify menu_purge_confirm shows space to recover and item count."""
+    from bot.handlers.callbacks import button_callback
+
+    with tempfile.TemporaryDirectory() as dl_dir:
+        # Create a sample file
+        sample_file = os.path.join(dl_dir, "video.mp4")
+        with open(sample_file, "wb") as f:
+            f.write(b"A" * 1024 * 500)  # 500 KB
+
+        # Mock update and callback query
+        query = MagicMock()
+        query.data = "menu_purge_confirm"
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+
+        update = MagicMock()
+        update.callback_query = query
+        update.effective_user.id = 12345
+
+        access_mgr = MagicMock()
+        access_mgr.is_admin.return_value = True
+        access_mgr.is_allowed.return_value = True
+
+        cookie_mgr = MagicMock()
+        stats_mgr = MagicMock()
+
+        queue = MagicMock()
+        queue.download_path = dl_dir
+
+        ctx = MagicMock()
+
+        await button_callback(
+            update=update,
+            context=ctx,
+            access_manager=access_mgr,
+            cookie_manager=cookie_mgr,
+            stats_manager=stats_mgr,
+            download_queue=queue
+        )
+
+        query.edit_message_text.assert_called_once()
+        call_text = query.edit_message_text.call_args[0][0]
+        assert "⚠️ *System Purge*" in call_text
+        assert "Space to recover:" in call_text
+        assert "500.0 KB" in call_text
+        assert "1 item" in call_text
+
+
+@pytest.mark.asyncio
+async def test_purge_execution_callback_displays_recovered_space():
+    """Verify purge_confirm executes deletion and reports recovered space."""
+    from bot.handlers.callbacks import button_callback
+
+    with tempfile.TemporaryDirectory() as dl_dir:
+        sample_file = os.path.join(dl_dir, "video.mp4")
+        with open(sample_file, "wb") as f:
+            f.write(b"B" * 1024 * 1024 * 2)  # 2.0 MB
+
+        query = MagicMock()
+        query.data = "purge_confirm"
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+
+        update = MagicMock()
+        update.callback_query = query
+        update.effective_user.id = 12345
+
+        access_mgr = MagicMock()
+        access_mgr.is_admin.return_value = True
+        access_mgr.is_allowed.return_value = True
+
+        queue = MagicMock()
+        queue.download_path = dl_dir
+
+        await button_callback(
+            update=update,
+            context=MagicMock(),
+            access_manager=access_mgr,
+            cookie_manager=MagicMock(),
+            stats_manager=MagicMock(),
+            download_queue=queue
+        )
+
+        query.edit_message_text.assert_called_once()
+        call_text = query.edit_message_text.call_args[0][0]
+        assert "✅ *Purge Complete*" in call_text
+        assert "Recovered `2.0 MB` (1 item)" in call_text
+        assert not os.path.exists(sample_file)
+

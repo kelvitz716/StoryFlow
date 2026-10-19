@@ -72,3 +72,57 @@ def format_storage_report(path: str = ".") -> str:
         f"📈 Progress: `[{usage_bar}]` {info['percent_used']}%\n"
         f"🆓 Free: `{to_gb(info['free']):.2f} GB` / `{to_gb(info['total']):.2f} GB`"
     )
+
+
+def get_directory_size(path: str = ".") -> Tuple[int, int]:
+    """
+    Calculate the total size in bytes and number of top-level items in a directory.
+
+    Returns:
+        Tuple of (total_bytes, item_count)
+    """
+    total_size = 0
+    item_count = 0
+    if not path or not os.path.exists(path) or not os.path.isdir(path):
+        return 0, 0
+    try:
+        for entry in os.scandir(path):
+            item_count += 1
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    total_size += entry.stat().st_size
+                elif entry.is_dir(follow_symlinks=False):
+                    for root, _, files in os.walk(entry.path):
+                        for f in files:
+                            fp = os.path.join(root, f)
+                            try:
+                                total_size += os.path.getsize(fp)
+                            except OSError:
+                                pass
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return total_size, item_count
+
+
+def format_size(size_bytes: float) -> str:
+    """Format bytes into a human-readable string (B, KB, MB, GB, TB)."""
+    try:
+        val = float(size_bytes)
+    except (ValueError, TypeError):
+        return "0 B"
+    if val <= 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    unit_idx = 0
+    while val >= 1024.0 and unit_idx < len(units) - 1:
+        val /= 1024.0
+        unit_idx += 1
+    if round(val, 1) >= 1024.0 and unit_idx < len(units) - 1:
+        val /= 1024.0
+        unit_idx += 1
+    if unit_idx == 0:
+        return f"{int(val)} B"
+    return f"{val:.1f} {units[unit_idx]}"
+
