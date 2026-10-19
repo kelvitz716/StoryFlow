@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -131,15 +132,19 @@ async def button_callback(
         try:
             total_bytes, _ = get_directory_size(download_path)
             recovered_str = format_size(total_bytes)
-            removed = 0
-            if os.path.isdir(download_path):
-                for entry in os.scandir(download_path):
-                    if entry.is_dir():
-                        shutil.rmtree(entry.path, ignore_errors=True)
+
+            def _do_purge():
+                removed = 0
+                if os.path.isdir(download_path):
+                    for entry in os.scandir(download_path):
+                        if entry.is_dir():
+                            shutil.rmtree(entry.path, ignore_errors=True)
+                        else:
+                            os.remove(entry.path)
                         removed += 1
-                    else:
-                        os.remove(entry.path)
-                        removed += 1
+                return removed
+
+            removed = await asyncio.to_thread(_do_purge)
             logging.info(f"🔥 Admin purge: removed {removed} items ({recovered_str}) from {download_path}")
             items_str = f"{removed} item" if removed == 1 else f"{removed} items"
             await query.edit_message_text(
@@ -148,10 +153,9 @@ async def button_callback(
                 reply_markup=get_back_button("menu_admin")
             )
         except Exception as e:
-            logging.error(f"Purge failed: {e}")
+            logging.error(f"Purge failed: {e}", exc_info=True)
             await query.edit_message_text(
-                f"❌ Purge failed: `{e}`",
-                parse_mode='Markdown',
+                "❌ Purge failed. Please check the server logs.",
                 reply_markup=get_back_button("menu_admin")
             )
 

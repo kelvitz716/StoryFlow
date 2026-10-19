@@ -23,7 +23,7 @@ from core.rate_limiter import RateLimiter
 from core.config import _env_int
 from core.storage import is_storage_critical
 from core.platform import extract_snapchat_username
-from core.security import sanitize_filename
+from core.security import sanitize_filename, is_safe_url
 from downloaders.base import BaseDownloader
 
 # ---------------------------------------------------------------------------
@@ -310,6 +310,14 @@ class SnapchatDownloader(BaseDownloader):
         output_path: str,
     ) -> Optional[str]:
         """Download an individual media file to disk."""
+        # SSRF guard: media_url is extracted from third-party HTML — validate
+        # it resolves to a globally-routable address before fetching.
+        if not is_safe_url(media_url):
+            logging.warning("⚠️ Skipping Snapchat media URL that failed SSRF check")
+            return None
+
+        _MAX_BYTES = 200 * 1024 * 1024  # 200 MB hard cap per file
+
         try:
             extension = "mp4" if media_type == 1 else "jpg"
             ts = timestamp if timestamp else str(int(time.time()))
@@ -322,8 +330,15 @@ class SnapchatDownloader(BaseDownloader):
             with self.session.get(media_url, stream=True, timeout=60) as response:
                 response.raise_for_status()
 
+                downloaded = 0
                 with open(filename, "wb") as f:
                     for chunk in response.iter_content(chunk_size=8192):
+                        downloaded += len(chunk)
+                        if downloaded > _MAX_BYTES:
+                            logging.warning(
+                                f"⚠️ Snapchat media file exceeded {_MAX_BYTES // (1024*1024)}MB limit — aborting"
+                            )
+                            return None
                         f.write(chunk)
 
             return filename
@@ -331,6 +346,7 @@ class SnapchatDownloader(BaseDownloader):
         except Exception as e:
             logging.error(f"❌ Failed to download media: {e}")
             return None
+
 
     # ------------------------------------------------------------------
     # Backwards-compat alias (queue.py calls download_stories directly

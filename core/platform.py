@@ -72,7 +72,8 @@ def extract_snapchat_username(url: str) -> Optional[str]:
             return segments[0].lstrip('@')
 
         if len(segments) < 2:
-            logging.warning(f"Invalid Snapchat URL format: {url}")
+            from core.security import mask_sensitive_url
+            logging.warning(f"Invalid Snapchat URL format: {mask_sensitive_url(url)}")
             return None
 
         action = segments[0].lower()

@@ -286,25 +286,34 @@ class MTProtoClient:
             ext = os.path.splitext(file_path)[1].lower()
             is_video = ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
             
-            if is_video:
-                await self.client.send_video(
-                    chat_id=chat_id,
-                    video=file_path,
-                    caption=caption,
-                    reply_to_message_id=reply_to_message_id,
-                    progress=progress_callback or self._default_progress
-                )
-            else:
-                await self.client.send_document(
-                    chat_id=chat_id,
-                    document=file_path,
-                    caption=caption,
-                    reply_to_message_id=reply_to_message_id,
-                    progress=progress_callback or self._default_progress
-                )
+            for attempt in range(3):
+                try:
+                    if is_video:
+                        await self.client.send_video(
+                            chat_id=chat_id,
+                            video=file_path,
+                            caption=caption,
+                            reply_to_message_id=reply_to_message_id,
+                            progress=progress_callback or self._default_progress
+                        )
+                    else:
+                        await self.client.send_document(
+                            chat_id=chat_id,
+                            document=file_path,
+                            caption=caption,
+                            reply_to_message_id=reply_to_message_id,
+                            progress=progress_callback or self._default_progress
+                        )
+                    logging.info("✅ MTProto upload complete!")
+                    return True
+                except FloodWait as e:
+                    logging.warning(f"⚠️ MTProto FloodWait during upload: sleeping {e.value}s (Attempt {attempt+1}/3)")
+                    await asyncio.sleep(e.value)
+                except Exception:
+                    raise
             
-            logging.info("✅ MTProto upload complete!")
-            return True
+            logging.error("❌ MTProto upload failed after 3 FloodWait retries")
+            return False
             
         except Exception as e:
             logging.error(f"❌ MTProto upload failed: {e}")

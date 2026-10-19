@@ -100,6 +100,10 @@ class DownloadQueue:
         self._jobs: Dict[str, DownloadJob] = {}
         self._workers: list = []
         self._running = False
+        # Strong reference set: prevents fire-and-forget status tasks from
+        # being garbage-collected before they complete (CPython GC may collect
+        # tasks that have no references even while scheduled).
+        self._active_status_tasks: set = set()
 
     @property
     def snapchat(self):
@@ -288,7 +292,9 @@ class DownloadQueue:
                         last_update = current_time
                         if self.status_callback:
                             task = asyncio.create_task(self.status_callback(job))
-                            task.add_done_callback(lambda t: t.exception())
+                            self._active_status_tasks.add(task)
+                            task.add_done_callback(self._active_status_tasks.discard)
+                            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
                     result = await self.registry.download(
                         url=job.url,
@@ -344,7 +350,7 @@ class DownloadQueue:
                 
                 finally:
                     if job and job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
-                        self._cleanup_job(job.job_id)
+                        await self._cleanup_job(job.job_id)
                     self._queue.task_done()
             
             except asyncio.CancelledError: break
@@ -354,11 +360,13 @@ class DownloadQueue:
             except Exception as e:
                 logging.error(f"Worker {worker_id} error: {e}")
     
-    def _cleanup_job(self, job_id: str):
+    async def _cleanup_job(self, job_id: str):
         job = self._jobs.pop(job_id, None)
         if job and job.job_dir and os.path.exists(job.job_dir):
-            try: shutil.rmtree(job.job_dir)
-            except Exception as e: logging.error(f"⚠️ Failed to cleanup directory {job.job_dir}: {e}")
+            try:
+                await asyncio.to_thread(shutil.rmtree, job.job_dir, True)
+            except Exception as e:
+                logging.error(f"⚠️ Failed to cleanup directory {job.job_dir}: {e}")
     
     async def _notify_status(self, job: DownloadJob):
         if self.status_callback:

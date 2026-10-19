@@ -3,8 +3,8 @@ import os
 import logging
 import asyncio
 from typing import List, Optional
-from telegram import Update, InputMediaPhoto, InputMediaVideo
-from telegram.error import RetryAfter, NetworkError, TimedOut
+from telegram import Update, InputMediaPhoto, InputMediaVideo, InputMediaDocument
+from telegram.error import RetryAfter, NetworkError, TimedOut, BadRequest
 
 from bot.edit_gate import request_edit, send_gate_open
 
@@ -99,20 +99,38 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
                 open_handles.append(f)
                 if ext in ('.jpg', '.jpeg', '.png', '.webp'):
                     media_group.append(InputMediaPhoto(media=f))
-                elif ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm'):
+                elif ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.gif'):
                     media_group.append(InputMediaVideo(media=f))
+                else:
+                    # Audio, documents and any unrecognised extension: send as document
+                    # so the file is not silently dropped.
+                    media_group.append(InputMediaDocument(media=f))
             
             if not media_group: 
                 break
 
             try:
                 # Increased timeout values specifically for heavy video batch sizes
-                await update.effective_message.reply_media_group(
-                    media=media_group,
-                    read_timeout=120,
-                    write_timeout=120,
-                    pool_timeout=120
-                )
+                try:
+                    await update.effective_message.reply_media_group(
+                        media=media_group,
+                        read_timeout=120,
+                        write_timeout=120,
+                        pool_timeout=120
+                    )
+                except BadRequest as br:
+                    # Original message was deleted — fall back to a plain send
+                    if "replied message not found" in str(br).lower() or "message to reply not found" in str(br).lower():
+                        logging.warning("⚠️ Original message deleted; sending without reply_to")
+                        await update.effective_message.get_bot().send_media_group(
+                            chat_id=update.effective_chat.id,
+                            media=media_group,
+                            read_timeout=120,
+                            write_timeout=120,
+                            pool_timeout=120
+                        )
+                    else:
+                        raise
                 uploaded_count += len(batch)
                 break
             except RetryAfter as e:
