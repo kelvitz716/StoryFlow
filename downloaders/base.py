@@ -250,8 +250,7 @@ class BaseDownloader:
                 stderr_lower = stderr_text.lower()
                 is_auth_error = (
                     returncode == 16
-                    or 'login required' in stderr_lower
-                    or 'log in for access' in stderr_lower
+                    or bool(re.search(r'login|log in|logged-in|accounts/login', stderr_lower))
                     or 'use --cookies' in stderr_lower
                     or bool(re.search(r'(?:http\s*(?:error\s*)?|\b)401\b', stderr_lower))
                     or 'sign in to confirm' in stderr_lower

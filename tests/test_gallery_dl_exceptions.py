@@ -209,3 +209,26 @@ async def test_ytdlp_auth_phrases_trigger_auth_error(phrase):
         assert res["success"] is False
         assert res["error"] == "Authentication required"
         assert res["details"] == "This content needs a logged-in session. Ask the admin to add cookies for this platform."
+
+
+@pytest.mark.asyncio
+async def test_instagram_redirect_to_login_triggers_auth_error():
+    """gallery-dl stderr with 'HTTP redirect to login page' triggers auth error."""
+    dl = BaseDownloader(output_path="./downloads")
+
+    stderr_msg = b"[instagram][error] HTTP redirect to login page (https://www.instagram.com/accounts/login/)\n"
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
+        proc = mock.MagicMock()
+        proc.returncode = 4
+        proc.stdout.readline = mock.AsyncMock(side_effect=[b"", b""])
+        proc.stderr.read = mock.AsyncMock(side_effect=[stderr_msg, b""])
+        proc.wait = mock.AsyncMock(return_value=0)
+        mock_exec.return_value = proc
+
+        res = await dl._execute_with_retry(["dummy"], "gallery-dl", max_attempts=1)
+        assert res["success"] is False
+        assert res["error"] == "Authentication required"
+        assert res["details"] == "This content needs a logged-in session. Ask the admin to add cookies for this platform."
+        assert res["returncode"] == 4
