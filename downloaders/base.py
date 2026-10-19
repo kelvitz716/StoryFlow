@@ -251,6 +251,8 @@ class BaseDownloader:
                 is_auth_error = (
                     returncode == 16
                     or 'login required' in stderr_lower
+                    or 'log in for access' in stderr_lower
+                    or 'use --cookies' in stderr_lower
                     or bool(re.search(r'(?:http\s*(?:error\s*)?|\b)401\b', stderr_lower))
                     or 'sign in to confirm' in stderr_lower
                 )
@@ -258,7 +260,7 @@ class BaseDownloader:
                     return {
                         'success': False,
                         'error': 'Authentication required',
-                        'details': 'Please provide cookies for this platform',
+                        'details': 'This content needs a logged-in session. Ask the admin to add cookies for this platform.',
                         'platform': process_name,
                         'returncode': returncode
                     }

@@ -159,3 +159,53 @@ async def test_429_and_503_trigger_3_retry_attempts(status_code, stderr_msg):
         assert mock_exec.call_count == 3
         # Should have slept between attempts (2 sleeps for 3 attempts)
         assert mock_sleep.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_ytdlp_auth_error_tiktok_extractor_stderr():
+    """Verify TikTok extractor stderr string triggers auth error with actionable guidance."""
+    dl = BaseDownloader(output_path="./downloads")
+
+    exact_tiktok_stderr = (
+        b"This post may not be comfortable for some audiences. "
+        b"Log in for access. Use --cookies-from-browser or --cookies for the authentication.\n"
+    )
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
+        proc = mock.MagicMock()
+        proc.returncode = 1
+        proc.stdout.readline = mock.AsyncMock(side_effect=[b"", b""])
+        proc.stderr.read = mock.AsyncMock(side_effect=[exact_tiktok_stderr, b""])
+        proc.wait = mock.AsyncMock(return_value=0)
+        mock_exec.return_value = proc
+
+        res = await dl._execute_with_retry(["dummy"], "yt-dlp", max_attempts=1)
+        assert res["success"] is False
+        assert res["error"] == "Authentication required"
+        assert res["details"] == "This content needs a logged-in session. Ask the admin to add cookies for this platform."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase", [
+    b"ERROR: log in for access\n",
+    b"ERROR: please use --cookies to authenticate\n",
+    b"ERROR: login required to watch this video\n",
+])
+async def test_ytdlp_auth_phrases_trigger_auth_error(phrase):
+    """Verify phrases 'log in for access', 'use --cookies', 'login required' trigger auth error."""
+    dl = BaseDownloader(output_path="./downloads")
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
+        proc = mock.MagicMock()
+        proc.returncode = 1
+        proc.stdout.readline = mock.AsyncMock(side_effect=[b"", b""])
+        proc.stderr.read = mock.AsyncMock(side_effect=[phrase, b""])
+        proc.wait = mock.AsyncMock(return_value=0)
+        mock_exec.return_value = proc
+
+        res = await dl._execute_with_retry(["dummy"], "yt-dlp", max_attempts=1)
+        assert res["success"] is False
+        assert res["error"] == "Authentication required"
+        assert res["details"] == "This content needs a logged-in session. Ask the admin to add cookies for this platform."
