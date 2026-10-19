@@ -1,6 +1,7 @@
 """Base class for media downloaders providing shared networking and parsing functionality."""
 
 import os
+import re
 import signal
 import asyncio
 import logging
@@ -80,10 +81,16 @@ class BaseDownloader:
             'network',
             'temporary',
             'rate limit',
-            'try again'
+            'try again',
+            'too many requests',
         ]
         stderr_lower = stderr.lower()
-        return any(keyword in stderr_lower for keyword in retryable_keywords)
+        if any(keyword in stderr_lower for keyword in retryable_keywords):
+            return True
+        # Match HTTP 429 and 5xx (e.g., 500, 502, 503, 504)
+        if re.search(r'\b(429|5\d{2})\b', stderr_lower):
+            return True
+        return False
 
     async def _execute_with_retry(self, command: list, process_name: str = "subprocess", max_attempts: int = 3, progress_callback: Optional[Callable] = None) -> Dict:
         """
@@ -244,7 +251,7 @@ class BaseDownloader:
                 is_auth_error = (
                     returncode == 16
                     or 'login required' in stderr_lower
-                    or '401' in stderr_lower
+                    or bool(re.search(r'(?:http\s*(?:error\s*)?|\b)401\b', stderr_lower))
                     or 'sign in to confirm' in stderr_lower
                 )
                 if is_auth_error:
@@ -274,16 +281,6 @@ class BaseDownloader:
                         'details': 'This video may require login, be private, or from an unsupported format',
                         'platform': process_name,
                         'returncode': 64
-                    }
-
-                # Exit code 4 = No Downloads / Nothing found
-                if returncode == 4:
-                    return {
-                        'success': False,
-                        'error': 'No active stories/spotlights found',
-                        'details': 'The user has no content available or it is private',
-                        'platform': process_name,
-                        'returncode': 4
                     }
 
                 # Retry on network errors

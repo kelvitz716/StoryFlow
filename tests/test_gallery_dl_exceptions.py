@@ -109,3 +109,53 @@ async def test_specific_stderr_triggers_auth_error():
             res = await dl._execute_with_retry(["dummy"], "gallery-dl", max_attempts=1)
             assert res["success"] is False
             assert res["error"] == "Authentication required"
+
+
+@pytest.mark.asyncio
+async def test_url_with_4012_not_treated_as_auth_error():
+    """URLs containing '4012' must NOT trigger false auth errors."""
+    dl = BaseDownloader(output_path="./downloads")
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
+        proc = mock.MagicMock()
+        proc.returncode = 1
+        proc.stdout.readline = mock.AsyncMock(side_effect=[b"", b""])
+        proc.stderr.read = mock.AsyncMock(side_effect=[b"Failed downloading https://instagram.com/p/4012345/\n", b""])
+        proc.wait = mock.AsyncMock(return_value=0)
+        mock_exec.return_value = proc
+
+        res = await dl._execute_with_retry(["dummy"], "gallery-dl", max_attempts=1)
+        assert res["success"] is False
+        assert res["error"] != "Authentication required"
+        assert "Authentication required" not in str(res.get("details", ""))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code,stderr_msg", [
+    (429, b"HTTP Error 429: Too Many Requests\n"),
+    (503, b"HTTP Error 503: Service Unavailable\n"),
+])
+async def test_429_and_503_trigger_3_retry_attempts(status_code, stderr_msg):
+    """HTTP 429 and 503 errors trigger exactly 3 retry attempts."""
+    dl = BaseDownloader(output_path="./downloads")
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.create_subprocess_exec") as mock_exec, \
+         mock.patch("asyncio.sleep", new_callable=mock.AsyncMock) as mock_sleep:
+
+        def make_proc():
+            proc = mock.MagicMock()
+            proc.returncode = 4  # exit code 4 from gallery-dl on http error
+            proc.stdout.readline = mock.AsyncMock(side_effect=[b"", b""])
+            proc.stderr.read = mock.AsyncMock(side_effect=[stderr_msg, b""])
+            proc.wait = mock.AsyncMock(return_value=0)
+            return proc
+
+        mock_exec.side_effect = [make_proc(), make_proc(), make_proc()]
+
+        res = await dl._execute_with_retry(["dummy"], "gallery-dl", max_attempts=3)
+        assert res["success"] is False
+        assert mock_exec.call_count == 3
+        # Should have slept between attempts (2 sleeps for 3 attempts)
+        assert mock_sleep.call_count == 2
