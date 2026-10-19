@@ -39,7 +39,13 @@ The community-hosted `snapstories.netlify.app` API was permanently decommissione
 
 ## 🚀 Future Roadmap & Long-term Goals
 
-(No outstanding tasks currently identified for the core roadmap. System is operating at full functional capacity.)
+### 1. Profile & Channel Download Policy (TikTok, Instagram, Twitter) [PENDING DECISION]
+- **Issue**: Profile URLs (e.g., `tiktok.com/@username`, `instagram.com/username`) trigger full user archive/playlist scraping in `gallery-dl`, potentially downloading hundreds of files, hitting the 5-minute subprocess timeout, or exhausting queue capacity. Meanwhile, `yt-dlp` has `--no-playlist` and only downloads 1 file.
+- **Proposed Options**:
+  1. **Bound Downloads**: Introduce `MAX_PROFILE_ITEMS` (e.g. 5 or 10) and pass `--range 1-N` to `gallery-dl` and `--playlist-items 1-N` to `yt-dlp`.
+  2. **Disallow Profiles**: Reject profile URLs with an actionable message prompting the user to send a specific post/video link.
+  3. **Configurable Toggle**: Add `ALLOW_PROFILE_DOWNLOADS=true|false` to `.env`.
+- **Status**: Pending architectural/product decision.
 
 ---
-*Last updated: 2026-04-26*
+*Last updated: 2026-10-19*
