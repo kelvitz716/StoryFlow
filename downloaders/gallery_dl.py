@@ -285,37 +285,29 @@ class GalleryDLDownloader(BaseDownloader):
 
     def _get_any_cookie(self, platform: str) -> Optional[str]:
         """
-        Find any available cookie for the platform (admin, default, or first existing),
-        to retry downloads that failed without credentials.
+        Find fallback cookie for the platform (admin if opted-in, or legacy default).
+        Never return arbitrary user cookies to prevent cross-user session leakage.
         """
         platform_lower = re.sub(r'[^\w\-]', '', platform.lower()) or 'unknown'
 
-        # 1. Admin cookie
-        if self.admin_ids:
-            for aid in self.admin_ids:
-                s_admin = re.sub(r'[^\w\-]', '', str(aid)) or 'unknown'
+        # 1. Admin cookie (only when explicitly opted in via ALLOW_ADMIN_COOKIE_FALLBACK)
+        if _ALLOW_ADMIN_COOKIE_FALLBACK:
+            if self.admin_ids:
+                for aid in self.admin_ids:
+                    s_admin = re.sub(r'[^\w\-]', '', str(aid)) or 'unknown'
+                    admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
+                    if os.path.exists(admin_cookie):
+                        return admin_cookie
+            elif self.admin_id:
+                s_admin = re.sub(r'[^\w\-]', '', str(self.admin_id)) or 'unknown'
                 admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
                 if os.path.exists(admin_cookie):
                     return admin_cookie
-        elif self.admin_id:
-            s_admin = re.sub(r'[^\w\-]', '', str(self.admin_id)) or 'unknown'
-            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
-            if os.path.exists(admin_cookie):
-                return admin_cookie
 
         # 2. Legacy default cookie (e.g. instagram.txt)
         default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
         if os.path.exists(default_cookie):
             return default_cookie
-
-        # 3. Any available platform cookie in cookie_path
-        try:
-            prefix = f"{platform_lower}_"
-            for fname in sorted(os.listdir(self.cookie_path)):
-                if fname.startswith(prefix) and fname.endswith(".txt"):
-                    return os.path.join(self.cookie_path, fname)
-        except OSError:
-            pass
 
         return None
 

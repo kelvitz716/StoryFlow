@@ -9,7 +9,16 @@ from typing import Optional
 PYROGRAM_AVAILABLE = None
 Client = None
 types = None
-from pyrogram.errors import FloodWait
+
+# FloodWait may not be available if Pyrogram isn't installed.
+# Provide a stub so that exception handlers referencing FloodWait
+# never raise NameError even in Pyrogram-free deployments.
+try:
+    from pyrogram.errors import FloodWait
+except ImportError:
+    class FloodWait(Exception):  # type: ignore[no-redef]
+        """Stub used when Pyrogram is not installed."""
+        value: int = 0
 
 def _ensure_pyrogram():
     """Import pyrogram only when needed to avoid early event loop errors."""

@@ -205,6 +205,12 @@ class BaseDownloader:
                             os.killpg(pgid, signal.SIGKILL)
                         except (ProcessLookupError, OSError):
                             pass
+                        # Reap the zombie: without wait() the OS keeps a defunct
+                        # entry in the process table until the parent exits.
+                        try:
+                            await process.wait()
+                        except Exception:
+                            pass
                     # Cancel and drain the stderr task so nothing leaks
                     if stderr_task and not stderr_task.done():
                         stderr_task.cancel()
@@ -234,6 +240,11 @@ class BaseDownloader:
                         pgid = os.getpgid(process.pid)
                         os.killpg(pgid, signal.SIGKILL)
                     except (ProcessLookupError, OSError):
+                        pass
+                    # Reap the zombie
+                    try:
+                        await process.wait()
+                    except Exception:
                         pass
                 if stderr_task and not stderr_task.done():
                     stderr_task.cancel()

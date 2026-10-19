@@ -2,6 +2,7 @@
 import sqlite3
 import os
 import logging
+from contextlib import contextmanager
 from typing import Dict, List, Any, Optional
 
 class Database:
@@ -12,13 +13,27 @@ class Database:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
         
-    def get_conn(self) -> sqlite3.Connection:
-        """Get a configured database connection."""
-        conn = sqlite3.connect(self.db_path)
+    @contextmanager
+    def get_conn(self):
+        """
+        Context manager that yields a configured, transaction-scoped SQLite
+        connection and guarantees conn.close() on exit.
+
+        NOTE: Python's ``with sqlite3.connect(...) as conn`` only manages the
+        *transaction* (COMMIT/ROLLBACK) and never closes the connection.  Callers
+        use ``with db.get_conn() as conn:``, so this wrapper must handle both
+        the transaction and the connection lifetime.
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         # Enable Write-Ahead-Logging for high concurrency
         conn.execute('PRAGMA journal_mode=WAL')
-        return conn
+        try:
+            with conn:       # transaction: COMMIT on success, ROLLBACK on error
+                yield conn
+        finally:
+            conn.close()     # always release the file descriptor
+
 
     def _init_db(self):
         """Initialize the database schema."""

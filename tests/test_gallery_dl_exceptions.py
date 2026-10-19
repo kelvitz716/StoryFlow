@@ -2,6 +2,9 @@
 Tests verifying gallery_dl exception classes, exit codes, and error mapping in BaseDownloader.
 """
 import pytest
+import os
+import asyncio
+from unittest import mock
 import gallery_dl.exception as gdx
 from downloaders.base import BaseDownloader
 
@@ -339,30 +342,48 @@ async def test_ytdlp_fallback_receives_retry_cookie():
 
 
 def test_get_any_cookie_resolution(tmp_path):
-    """Verify _get_any_cookie resolves admin cookie, default cookie, or any platform cookie."""
-    from downloaders.gallery_dl import GalleryDLDownloader
+    """Verify _get_any_cookie never leaks arbitrary user cookies.
+
+    After the cross-user cookie fix:
+    - Arbitrary user cookies (e.g. instagram_user456.txt) are NEVER returned.
+    - Legacy platform-default cookies (e.g. instagram.txt) are returned.
+    - Admin cookies are returned ONLY when ALLOW_ADMIN_COOKIE_FALLBACK=true.
+    """
+    import importlib
+    import downloaders.gallery_dl as gdl_module
 
     cookie_dir = tmp_path / "cookies"
     cookie_dir.mkdir()
 
-    dl = GalleryDLDownloader(cookie_path=str(cookie_dir), admin_id="admin123")
+    # --- ALLOW_ADMIN_COOKIE_FALLBACK disabled (default) ---
+    with mock.patch.dict(os.environ, {'ALLOW_ADMIN_COOKIE_FALLBACK': 'false'}):
+        importlib.reload(gdl_module)
+        dl = gdl_module.GalleryDLDownloader(cookie_path=str(cookie_dir), admin_id="admin123")
 
-    # None initially
-    assert dl._get_any_cookie("Instagram") is None
+        # No cookies at all → None
+        assert dl._get_any_cookie("Instagram") is None
 
-    # User-uploaded cookie exists (e.g. instagram_user456.txt)
-    user_cookie = cookie_dir / "instagram_user456.txt"
-    user_cookie.write_text("user cookie")
-    assert dl._get_any_cookie("Instagram") == str(user_cookie)
+        # User-uploaded cookie must NOT be returned (cross-user leak prevention)
+        user_cookie = cookie_dir / "instagram_user456.txt"
+        user_cookie.write_text("user cookie")
+        assert dl._get_any_cookie("Instagram") is None, \
+            "Security: arbitrary user cookie must never be returned by _get_any_cookie"
 
-    # Legacy default cookie takes precedence over arbitrary user cookie
-    default_cookie = cookie_dir / "instagram.txt"
-    default_cookie.write_text("default cookie")
-    assert dl._get_any_cookie("Instagram") == str(default_cookie)
+        # Legacy default cookie IS returned
+        default_cookie = cookie_dir / "instagram.txt"
+        default_cookie.write_text("default cookie")
+        assert dl._get_any_cookie("Instagram") == str(default_cookie)
 
-    # Admin cookie takes highest precedence
-    admin_cookie = cookie_dir / "instagram_admin123.txt"
-    admin_cookie.write_text("admin cookie")
-    assert dl._get_any_cookie("Instagram") == str(admin_cookie)
+        # Admin cookie is NOT returned when fallback is disabled
+        admin_cookie = cookie_dir / "instagram_admin123.txt"
+        admin_cookie.write_text("admin cookie")
+        assert dl._get_any_cookie("Instagram") == str(default_cookie), \
+            "Admin cookie must not be returned when ALLOW_ADMIN_COOKIE_FALLBACK=false"
 
+    # --- ALLOW_ADMIN_COOKIE_FALLBACK enabled ---
+    with mock.patch.dict(os.environ, {'ALLOW_ADMIN_COOKIE_FALLBACK': 'true'}):
+        importlib.reload(gdl_module)
+        dl = gdl_module.GalleryDLDownloader(cookie_path=str(cookie_dir), admin_id="admin123")
+        # Admin cookie takes precedence over default when opted in
+        assert dl._get_any_cookie("Instagram") == str(admin_cookie)
 

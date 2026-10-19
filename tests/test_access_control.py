@@ -44,6 +44,7 @@ def _make_access_manager(admin_id: str = "9999", allowed: list = None) -> Access
     touch the real data/storyflow.db during tests.
     """
     from unittest.mock import patch as _patch
+    from contextlib import contextmanager
     import sqlite3
 
     # We need a real (in-memory) database for AccessManager to work
@@ -54,7 +55,12 @@ def _make_access_manager(admin_id: str = "9999", allowed: list = None) -> Access
     conn.commit()
 
     mock_db = MagicMock()
-    mock_db.get_conn = MagicMock(return_value=conn)
+
+    @contextmanager
+    def _get_conn():
+        yield conn
+
+    mock_db.get_conn = _get_conn
 
     with _patch('auth.access.db', mock_db):
         am = AccessManager(admin_id=admin_id)
