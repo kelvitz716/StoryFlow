@@ -7,7 +7,7 @@ import asyncio
 import logging
 from collections import deque
 from typing import Optional, Callable, Dict
-from core.queue import _env_int
+from core.config import _env_int
 from utils.log_sanitizer import sanitize_string
 
 # Wall-clock timeout for every subprocess call (seconds).

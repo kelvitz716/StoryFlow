@@ -20,7 +20,7 @@ import requests
 from typing import Dict, List, Optional, Callable
 
 from core.rate_limiter import RateLimiter
-from core.queue import _env_int
+from core.config import _env_int
 from core.storage import is_storage_critical
 from core.platform import extract_snapchat_username
 from core.security import sanitize_filename

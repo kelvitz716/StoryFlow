@@ -7,6 +7,8 @@ import time
 import shutil
 from core.storage import is_storage_critical, format_storage_report
 from core.database import db
+from core.config import _env_int, _env_float
+from downloaders.registry import DownloaderRegistry
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Callable, Any
 from enum import Enum
@@ -78,20 +80,36 @@ class DownloadQueue:
         self,
         max_concurrent: int = 10,
         max_per_user: int = 20,
-        status_callback: Optional[Callable] = None
+        status_callback: Optional[Callable] = None,
+        downloader_registry: Optional[DownloaderRegistry] = None
     ):
         self.max_concurrent = max(1, max_concurrent)
         self.max_per_user = max(1, max_per_user)
         self.status_callback = status_callback
         self.download_path = os.getenv('DOWNLOAD_PATH', './downloads')
         
-        self.snapchat = None
-        self.gallery_dl = None
+        self.registry = downloader_registry or DownloaderRegistry()
         
         self._queue: asyncio.Queue = asyncio.Queue()
         self._jobs: Dict[str, DownloadJob] = {}
         self._workers: list = []
         self._running = False
+
+    @property
+    def snapchat(self):
+        return self.registry.snapchat
+
+    @snapchat.setter
+    def snapchat(self, val):
+        self.registry.snapchat = val
+
+    @property
+    def gallery_dl(self):
+        return self.registry.gallery_dl
+
+    @gallery_dl.setter
+    def gallery_dl(self, val):
+        self.registry.gallery_dl = val
         
     async def start(self):
         """Start the queue workers."""
@@ -263,13 +281,13 @@ class DownloadQueue:
                             task = asyncio.create_task(self.status_callback(job))
                             task.add_done_callback(lambda t: t.exception())
 
-                    is_spotlight = "/spotlight/" in job.url
-                    if job.platform == "Snapchat" and self.snapchat and not is_spotlight:
-                         result = await self.snapchat.download(job.url, job.user_id, job.job_id)
-                    elif self.gallery_dl:
-                         result = await self.gallery_dl.download(job.url, job.platform, job.user_id, job.job_id, progress_callback=progress_callback)
-                    else:
-                         result = {'success': False, 'error': 'Downloader not initialized'}
+                    result = await self.registry.download(
+                        url=job.url,
+                        platform=job.platform,
+                        user_id=job.user_id,
+                        job_id=job.job_id,
+                        progress_callback=progress_callback
+                    )
                     
                     if not result.get('success'):
                         job.status = JobStatus.FAILED
@@ -375,8 +393,6 @@ def get_queue() -> DownloadQueue:
         download_queue = DownloadQueue()
     return download_queue
 
-from core.config import _env_int, _env_float
-
 
 async def init_queue(
     snapchat_downloader,
@@ -398,13 +414,16 @@ async def init_queue(
     else:
         max_per_user = max(1, max_per_user)
 
+    registry = DownloaderRegistry(
+        snapchat=snapchat_downloader,
+        gallery_dl=gallery_dl_downloader
+    )
     download_queue = DownloadQueue(
         max_concurrent=max_concurrent,
         max_per_user=max_per_user,
-        status_callback=status_callback
+        status_callback=status_callback,
+        downloader_registry=registry
     )
-    download_queue.snapchat = snapchat_downloader
-    download_queue.gallery_dl = gallery_dl_downloader
     await download_queue.start()
     return download_queue
 

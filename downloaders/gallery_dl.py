@@ -5,7 +5,7 @@ import re
 import asyncio
 import logging
 from typing import Dict, Optional, Callable
-from core.queue import _env_int
+from core.config import _env_int
 
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
