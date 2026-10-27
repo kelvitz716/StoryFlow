@@ -10,7 +10,7 @@ idna==3.11
 pyaes==1.6.1
 Pyrogram==2.0.106
 PySocks==1.7.1
-python-dotenv==1.2.1
+python-dotenv==1.2.2
 python-telegram-bot==22.5
 requests==2.32.5
 tenacity==9.1.2
