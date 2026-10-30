@@ -2,8 +2,7 @@
 set -e
 
 echo "🔄 [Entrypoint] Upgrading yt-dlp and gallery-dl to the latest versions..."
-# Upgrade core download libraries at container launch to handle breaking site changes
-pip install --no-cache-dir --upgrade yt-dlp gallery-dl
+pip install --no-cache-dir --upgrade yt-dlp gallery-dl || echo "⚠️ extractor upgrade failed, continuing with installed versions"
 
 echo "🚀 [Entrypoint] Starting StoryFlow..."
 exec python storyflow.py
