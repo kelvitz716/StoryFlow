@@ -55,8 +55,8 @@ class GalleryDLDownloader(BaseDownloader):
             # Get list of files before download (only in this job's folder)
             files_before = self._get_download_files(job_output_path)
             
-            cookie_file = self._get_cookie_file(platform, user_id)
-            
+            tried_cookie = None
+
             # 1. Try download without cookies first
             command = self._build_command(url, platform, user_id, job_output_path, use_cookies=False)
             
@@ -92,13 +92,12 @@ class GalleryDLDownloader(BaseDownloader):
                 result['message'] = "Downloads completed (with some errors)"
                 return result
 
-            # 2. When download without cookies fails, retry with best available cookie.
-            # Always try admin/default fallback here — the first attempt already failed
-            # without credentials, so using any cookie is safe regardless of ALLOW_ADMIN_COOKIE_FALLBACK.
-            retry_cookie = cookie_file or self._get_any_cookie(platform)
-            if retry_cookie:
+            # 2. When download without cookies fails, retry with user's/allowed cookie.
+            retry_cookie = self._get_cookie_file(platform, user_id)
+            if retry_cookie and retry_cookie != tried_cookie:
+                tried_cookie = retry_cookie
                 logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(retry_cookie)}...")
-                command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True, cookie_override=retry_cookie)
+                command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True)
                 result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback)
 
                 files_after = self._get_download_files(job_output_path)
@@ -124,7 +123,7 @@ class GalleryDLDownloader(BaseDownloader):
             fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram", "Generic"]
             if platform in fallback_platforms:
                 logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback, cookie_override=retry_cookie)
+                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback)
                 if fallback_result and fallback_result['success']:
                     return fallback_result
                 elif fallback_result:
@@ -145,7 +144,7 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None, cookie_override: Optional[str] = None) -> Dict:
+    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).
         
@@ -156,7 +155,6 @@ class GalleryDLDownloader(BaseDownloader):
             output_path: Isolated output directory
             files_before: Set of files before request started
             progress_callback: Optional progress callback
-            cookie_override: Optional explicit cookie file path to use
             
         Returns:
             Dict with download result
@@ -175,7 +173,7 @@ class GalleryDLDownloader(BaseDownloader):
             ]
             
             # Add cookies if available
-            cookie_file = cookie_override or self._get_cookie_file(platform, user_id)
+            cookie_file = self._get_cookie_file(platform, user_id)
             if cookie_file:
                 logging.info(f"🍪 Using {platform} cookies with yt-dlp: {os.path.basename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
@@ -238,7 +236,7 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str, use_cookies: bool = True, cookie_override: Optional[str] = None) -> list:
+    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str, use_cookies: bool = True) -> list:
         """Build gallery-dl command with appropriate options."""
         command = [
             'gallery-dl',
@@ -249,8 +247,7 @@ class GalleryDLDownloader(BaseDownloader):
         
         # Add cookie support
         if use_cookies:
-            # Prefer explicit override (e.g., admin/default cookie for retry path)
-            cookie_file = cookie_override or self._get_cookie_file(platform, user_id)
+            cookie_file = self._get_cookie_file(platform, user_id)
             if cookie_file:
                 logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
@@ -263,36 +260,6 @@ class GalleryDLDownloader(BaseDownloader):
         command.extend(['--', url])
         
         return command
-
-    def _get_any_cookie(self, platform: str) -> Optional[str]:
-        """
-        Find any available cookie for the platform (admin, default, or first existing),
-        to retry downloads that failed without credentials.
-        """
-        platform_lower = re.sub(r'[^\w\-]', '', platform.lower()) or 'unknown'
-
-        # 1. Admin cookie
-        if self.admin_id:
-            s_admin = re.sub(r'[^\w\-]', '', str(self.admin_id)) or 'unknown'
-            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
-            if os.path.exists(admin_cookie):
-                return admin_cookie
-
-        # 2. Legacy default cookie (e.g. instagram.txt)
-        default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
-        if os.path.exists(default_cookie):
-            return default_cookie
-
-        # 3. Any available platform cookie in cookie_path
-        try:
-            prefix = f"{platform_lower}_"
-            for fname in sorted(os.listdir(self.cookie_path)):
-                if fname.startswith(prefix) and fname.endswith(".txt"):
-                    return os.path.join(self.cookie_path, fname)
-        except OSError:
-            pass
-
-        return None
 
     def _get_cookie_file(self, platform: str, user_id: Optional[str]) -> Optional[str]:
         """

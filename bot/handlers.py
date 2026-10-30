@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, Application
 
 from core.platform import identify_platform
 from auth.access import AccessManager
-from auth.cookies import CookieManager  # [NEW]
+from auth.cookies import CookieManager, delete_user_cookies  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
 from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError, JOB_MESSAGES
@@ -556,6 +556,7 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     elif action == 'remove_user':
         if access_manager.remove_user(target_id):
+            delete_user_cookies(target_id)
             response = f"✅ `{target_id}` removed from the allowed list."
         else:
             response = f"⚠️ `{target_id}` was not in the allowed list."
