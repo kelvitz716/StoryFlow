@@ -16,6 +16,7 @@ import time
 import json
 import logging
 import asyncio
+from urllib.parse import urlparse, urljoin
 import requests
 from typing import Dict, List, Optional, Callable
 
@@ -23,8 +24,12 @@ from core.rate_limiter import RateLimiter
 from core.queue import _env_int
 from core.storage import is_storage_critical
 from core.platform import extract_snapchat_username
-from core.security import sanitize_filename
+from core.security import sanitize_filename, is_safe_url
 from downloaders.base import BaseDownloader
+
+_ALLOWED_MEDIA_HOST_SUFFIXES = ("sc-cdn.net", "snapchat.com")
+_MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
+_DOWNLOAD_TIMEOUT_SECONDS = _env_int('DOWNLOAD_TIMEOUT_SECONDS', 600, 10, 86400)
 
 # ---------------------------------------------------------------------------
 # Snapchat web endpoint — no auth required for public profiles
@@ -43,6 +48,79 @@ _HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+
+def _safe_get(
+    url: str,
+    session: Optional[requests.Session] = None,
+    timeout: Optional[float] = None,
+) -> Optional[requests.Response]:
+    """Safely fetch media URL:
+    - Require https, host in _ALLOWED_MEDIA_HOST_SUFFIXES, and is_safe_url(url).
+    - Use allow_redirects=False and follow at most 3 redirects manually,
+      re-validating every hop the same way.
+    """
+    sess = session or requests.Session()
+    current_url = url
+    max_redirects = 3
+    req_timeout = timeout if timeout is not None else _DOWNLOAD_TIMEOUT_SECONDS
+
+    for hop in range(max_redirects + 1):
+        try:
+            parsed = urlparse(current_url)
+            if parsed.scheme != 'https':
+                logging.warning(f"Rejected non-HTTPS media URL: {current_url}")
+                return None
+
+            hostname = parsed.hostname
+            if not hostname:
+                logging.warning(f"Rejected media URL with no hostname: {current_url}")
+                return None
+
+            hostname = hostname.rstrip('.').lower()
+            logging.info(f"Observed Snapchat media hostname: {hostname}")
+
+            allowed = any(
+                hostname == suffix or hostname.endswith('.' + suffix)
+                for suffix in _ALLOWED_MEDIA_HOST_SUFFIXES
+            )
+            if not allowed:
+                logging.warning(
+                    f"Disallowed Snapchat media hostname: {hostname} "
+                    f"(must end with one of {_ALLOWED_MEDIA_HOST_SUFFIXES})"
+                )
+                return None
+
+            if not is_safe_url(current_url):
+                logging.warning(f"SSRF check failed for media URL: {current_url}")
+                return None
+
+            response = sess.get(
+                current_url,
+                stream=True,
+                allow_redirects=False,
+                timeout=req_timeout,
+                headers=_HEADERS,
+            )
+        except Exception as e:
+            logging.warning(f"Request failed for {current_url}: {e}")
+            return None
+
+        if response.is_redirect or response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                logging.warning(f"Redirect without Location header from {current_url}")
+                return None
+            current_url = urljoin(current_url, location)
+            if hop >= max_redirects:
+                logging.warning(f"Too many redirects ({max_redirects}) for media URL: {url}")
+                return None
+            continue
+
+        return response
+
+    return None
 
 
 class SnapchatDownloader(BaseDownloader):
@@ -224,6 +302,10 @@ class SnapchatDownloader(BaseDownloader):
                   ``"highlights"`` — curated highlights only;
                   ``"both"`` — everything (default).
         """
+        if not re.match(r'^[A-Za-z0-9._-]{1,32}$', username):
+            logging.warning(f"Invalid Snapchat username for _scrape_page: {username!r}")
+            return []
+
         url = _STORY_URL.format(username=username)
         resp = self.session.get(url, timeout=30)
         resp.raise_for_status()
@@ -296,9 +378,16 @@ class SnapchatDownloader(BaseDownloader):
 
         return result
 
+
     # ------------------------------------------------------------------
-    # Media download helper (unchanged from previous version)
+    # Media download helper
     # ------------------------------------------------------------------
+
+    def _safe_get(
+        self, url: str, timeout: Optional[float] = None
+    ) -> Optional[requests.Response]:
+        """Instance delegate for _safe_get using self.session."""
+        return _safe_get(url, session=self.session, timeout=timeout)
 
     def _download_media(
         self,
@@ -310,27 +399,83 @@ class SnapchatDownloader(BaseDownloader):
         output_path: str,
     ) -> Optional[str]:
         """Download an individual media file to disk."""
-        try:
-            extension = "mp4" if media_type == 1 else "jpg"
-            ts = timestamp if timestamp else str(int(time.time()))
-            safe_username = sanitize_filename(username)
-            filename = os.path.join(
-                output_path,
-                f"snapchat_{safe_username}_{ts}_{index}.{extension}",
-            )
+        # 1. Disk critical check before each file
+        is_critical, usage = is_storage_critical(output_path)
+        if is_critical:
+            logging.error(f"❌ Storage critical ({usage}%). Skipping file {index} for @{username}.")
+            return None
 
-            response = self.session.get(media_url, stream=True, timeout=60)
+        # 2. Wall-clock deadline
+        start_time = time.time()
+        deadline = start_time + _DOWNLOAD_TIMEOUT_SECONDS
+
+        safe_username = sanitize_filename(username)
+        extension = "mp4" if media_type == 1 else "jpg"
+        ts = timestamp if timestamp else str(int(time.time()))
+        filename = os.path.join(
+            output_path,
+            f"snapchat_{safe_username}_{ts}_{index}.{extension}",
+        )
+
+        response = None
+        try:
+            remaining_time = deadline - time.time()
+            if remaining_time <= 0:
+                logging.error("❌ Download timeout exceeded before request")
+                return None
+
+            response = self._safe_get(media_url, timeout=remaining_time)
+            if response is None:
+                return None
+
+            # 3. Content-Length check
+            max_bytes = _MAX_FILE_SIZE_MB * 1024 * 1024
+            cl_header = response.headers.get("Content-Length")
+            if cl_header:
+                try:
+                    content_length = int(cl_header)
+                    if content_length > max_bytes:
+                        logging.warning(
+                            f"Content-Length ({content_length} bytes) exceeds MAX_FILE_SIZE_MB ({_MAX_FILE_SIZE_MB} MB)"
+                        )
+                        return None
+                except ValueError:
+                    pass
+
             response.raise_for_status()
 
+            # 4. Stream and count bytes with wall-clock deadline
+            total_bytes = 0
             with open(filename, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                    if time.time() > deadline:
+                        logging.warning(f"Download exceeded wall-clock timeout ({_DOWNLOAD_TIMEOUT_SECONDS}s)")
+                        raise TimeoutError("Download timed out")
+                    if chunk:
+                        total_bytes += len(chunk)
+                        if total_bytes > max_bytes:
+                            logging.warning(
+                                f"Downloaded bytes ({total_bytes}) exceeded limit ({max_bytes} bytes)"
+                            )
+                            raise ValueError("File size limit exceeded")
+                        f.write(chunk)
 
             return filename
 
         except Exception as e:
             logging.error(f"❌ Failed to download media: {e}")
+            if os.path.exists(filename):
+                try:
+                    os.remove(filename)
+                except OSError:
+                    pass
             return None
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Backwards-compat alias (queue.py calls download_stories directly

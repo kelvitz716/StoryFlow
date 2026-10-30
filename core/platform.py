@@ -69,7 +69,11 @@ def extract_snapchat_username(url: str) -> Optional[str]:
         # Expected patterns: /add/username, /stories/username, /spotlight/username, /highlight/username, /@username
 
         if len(segments) == 1 and segments[0].startswith('@'):
-            return segments[0].lstrip('@')
+            username = segments[0].lstrip('@')
+            if not re.match(r'^[A-Za-z0-9._-]{1,32}$', username):
+                logging.warning(f"Invalid Snapchat username extracted: {username!r}")
+                return None
+            return username
 
         if len(segments) < 2:
             logging.warning(f"Invalid Snapchat URL format: {url}")
@@ -78,10 +82,13 @@ def extract_snapchat_username(url: str) -> Optional[str]:
         action = segments[0].lower()
 
         if action in ('add', 'stories', 'spotlight', 'highlight', 'highlights'):
+            if len(segments) > 3 or (len(segments) > 2 and segments[2] != 'l'):
+                logging.warning(f"Invalid Snapchat URL path structure: {url}")
+                return None
             username = segments[1].lstrip('@')
-            # Clean username (remove trailing 'l' from some share links)
-            if len(segments) > 2 and segments[2] == 'l':
-                pass  # Username is already correct
+            if '..' in username or not re.match(r'^[A-Za-z0-9._-]{1,32}$', username):
+                logging.warning(f"Invalid Snapchat username extracted: {username!r}")
+                return None
             return username
         else:
             logging.warning(f"Unrecognized Snapchat URL action: {action}")
