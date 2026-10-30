@@ -120,35 +120,9 @@ docker build -t storyflow .
 # 4. Prepare directories
 mkdir -p downloads cookies sessions
 
-# 5. Run Container
-echo "🏃 Starting container..."
-# Stop existing container if running
-docker stop storyflow_app 2>/dev/null || true
-docker rm storyflow_app 2>/dev/null || true
-
-# Fix permissions for mounted directories (using container UID 1000)
-# We use a temporary alpine container to chown the volumes. 
-# This works even if the host user doesn't have sudo, because docker runs as root.
-mkdir -p downloads cookies sessions data
-echo "🔒 Setting permissions for volumes (UID 1000)..."
-docker run --rm \
-    -v "$(pwd)/downloads:/downloads" \
-    -v "$(pwd)/cookies:/cookies" \
-    -v "$(pwd)/sessions:/sessions" \
-    -v "$(pwd)/data:/data" \
-    alpine sh -c "chown -R 1000:1000 /downloads /cookies /sessions /data" || echo "⚠️  Warning: Permission fix failed."
-
-# Run with host networking to avoid some DNS issues, or just standard bridge. 
-# Added :z to volumes for SELinux support (required on Fedora/CentOS/RHEL)
-docker run -d \
-    --name storyflow_app \
-    --restart unless-stopped \
-    --env-file .env \
-    -v "$(pwd)/downloads:/app/downloads:z" \
-    -v "$(pwd)/cookies:/app/cookies:z" \
-    -v "$(pwd)/sessions:/app/sessions:z" \
-    -v "$(pwd)/data:/app/data:z" \
-    storyflow
+# 5. Run Container via docker compose (reads docker-compose.yml for security settings)
+echo "🏃 Starting container via docker compose..."
+docker compose up -d --build
 
 echo "✅ Deployment successful! Container 'storyflow_app' is running."
 echo "📜 View logs with: docker logs -f storyflow_app"

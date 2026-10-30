@@ -17,6 +17,16 @@ services:
       - ./logs:/app/logs
     env_file:
       - .env
+    # G3 container hardening
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
 
 networks:
   proxy_net:
