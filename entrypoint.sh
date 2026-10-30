@@ -3,6 +3,7 @@ set -e
 
 echo "🔄 [Entrypoint] Upgrading yt-dlp and gallery-dl to the latest versions..."
 pip install --no-cache-dir --upgrade yt-dlp gallery-dl || echo "⚠️ extractor upgrade failed, continuing with installed versions"
+python -c "import importlib.metadata as m; print('yt-dlp', m.version('yt-dlp'), '| gallery-dl', m.version('gallery_dl'))" || true
 
 echo "🚀 [Entrypoint] Starting StoryFlow..."
 exec python storyflow.py
