@@ -12,3 +12,15 @@ downloads/
 sessions/
 cookies/*.txt
 !cookies/.keep
+.git
+.github
+data/
+logs/
+cookies/
+!cookies/.keep
+sessions/
+tests/
+docs/
+*.md
+.env*
+venv/
