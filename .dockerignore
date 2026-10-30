@@ -24,3 +24,14 @@ docs/
 *.md
 .env*
 venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+deploy.sh
+update_oci.sh
+Dockerfile
+docker-compose.yml
+requirements-dev.txt
+.dockerignore
+.gitignore
