@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Callable
 from core.rate_limiter import RateLimiter
 from core.queue import _env_int
 from core.storage import is_storage_critical
-from core.platform import extract_snapchat_username
+from core.platform import extract_snapchat_username, _valid_snapchat_username
 from core.security import sanitize_filename, is_safe_url
 from downloaders.base import BaseDownloader
 
@@ -302,7 +302,7 @@ class SnapchatDownloader(BaseDownloader):
                   ``"highlights"`` — curated highlights only;
                   ``"both"`` — everything (default).
         """
-        if not re.match(r'^[A-Za-z0-9._-]{1,32}$', username):
+        if not _valid_snapchat_username(username):
             logging.warning(f"Invalid Snapchat username for _scrape_page: {username!r}")
             return []
 

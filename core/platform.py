@@ -42,6 +42,15 @@ def identify_platform(url: str) -> str:
         return "Unknown"
 
 
+def _valid_snapchat_username(name: str) -> bool:
+    """Validate Snapchat username against allowed pattern and reject dot-only names."""
+    if not isinstance(name, str):
+        return False
+    if name in ('.', '..'):
+        return False
+    return bool(re.fullmatch(r'[A-Za-z0-9._-]{1,32}', name))
+
+
 def extract_snapchat_username(url: str) -> Optional[str]:
     """
     Extract username from Snapchat URL.
@@ -70,7 +79,7 @@ def extract_snapchat_username(url: str) -> Optional[str]:
 
         if len(segments) == 1 and segments[0].startswith('@'):
             username = segments[0].lstrip('@')
-            if not re.match(r'^[A-Za-z0-9._-]{1,32}$', username):
+            if not _valid_snapchat_username(username):
                 logging.warning(f"Invalid Snapchat username extracted: {username!r}")
                 return None
             return username
@@ -86,7 +95,7 @@ def extract_snapchat_username(url: str) -> Optional[str]:
                 logging.warning(f"Invalid Snapchat URL path structure: {url}")
                 return None
             username = segments[1].lstrip('@')
-            if '..' in username or not re.match(r'^[A-Za-z0-9._-]{1,32}$', username):
+            if not _valid_snapchat_username(username):
                 logging.warning(f"Invalid Snapchat username extracted: {username!r}")
                 return None
             return username
