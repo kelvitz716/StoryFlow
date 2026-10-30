@@ -55,6 +55,7 @@ If you prefer to run directly on your host:
     - `TELEGRAM_BOT_TOKEN`: From @BotFather.
     - `ADMIN_USER_ID`: Your Telegram ID (to authorize commands).
     - `MODE=telegram`: To run the bot.
+    Restrict file permissions on the host: `chmod 600 .env`.
 
 4.  **Start the Bot**:
     ```bash

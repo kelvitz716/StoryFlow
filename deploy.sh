@@ -2,6 +2,7 @@
 
 # Exit on error
 set -e
+umask 077
 
 echo "🚀 StoryFlow Deployment Script"
 echo "=============================="
@@ -75,7 +76,7 @@ prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" "$TELEGRAM_API_ID" "mask"
 prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH" "mask"
 prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER" "mask"
 prompt_input "Enter Session String (optional, for production)" "TELEGRAM_SESSION_STRING" "$TELEGRAM_SESSION_STRING" "mask"
-prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357" "mask"
+prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "" "mask"
 prompt_input "Enter Mode (telegram/cli)" "MODE" "telegram"
 
 # 2. Write to .env
@@ -110,6 +111,7 @@ TELEGRAM_SESSION_STRING=$TELEGRAM_SESSION_STRING
 # Mode: cli or telegram
 MODE=$MODE
 EOF
+chmod 600 .env
 
 # 3. Build Docker Image
 echo "🔨 Building Docker image (this may take a minute)..."
