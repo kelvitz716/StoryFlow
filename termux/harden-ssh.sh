@@ -90,7 +90,7 @@ if [ -n "$LISTEN_IP" ]; then
 fi
 
 # Generate updated config using POSIX awk:
-# Replaces existing occurrences of directives or appends them if missing.
+# Replaces existing occurrences of directives or inserts them before the first Match line.
 NEW_CONFIG_TMP=$(mktemp)
 awk '
 NR == FNR {
@@ -103,9 +103,28 @@ NF == 0 || $1 ~ /^#/ {
     print $0
     next
 }
+in_match {
+    print $0
+    next
+}
 {
     first = $1
     sub(/=.*$/, "", first)
+    if (tolower(first) == "match") {
+        if (!first_match_seen) {
+            first_match_seen = 1
+            for (i = 1; i <= num_keys; i++) {
+                k = order[i]
+                if (!seen_global[k]) {
+                    print target[k]
+                    seen_global[k] = 1
+                }
+            }
+        }
+        in_match = 1
+        print $0
+        next
+    }
     matched = ""
     for (i = 1; i <= num_keys; i++) {
         k = order[i]
@@ -115,19 +134,21 @@ NF == 0 || $1 ~ /^#/ {
         }
     }
     if (matched != "") {
-        if (!seen[matched]) {
+        if (!seen_global[matched]) {
             print target[matched]
-            seen[matched] = 1
+            seen_global[matched] = 1
         }
         next
     }
     print $0
 }
 END {
-    for (i = 1; i <= num_keys; i++) {
-        k = order[i]
-        if (!seen[k]) {
-            print target[k]
+    if (!first_match_seen) {
+        for (i = 1; i <= num_keys; i++) {
+            k = order[i]
+            if (!seen_global[k]) {
+                print target[k]
+            }
         }
     }
 }
@@ -172,7 +193,13 @@ fi
 # 5. Reload without dropping existing sessions
 if [ "$RELOAD" = "1" ]; then
   if [ -f "$PIDFILE" ]; then
-    kill -HUP "$(cat "$PIDFILE")"
+    PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+    kill -HUP "$PID" 2>/dev/null || true
+    sleep 2
+    if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
+      echo "sshd is not running. Start it from the Termux app with: sshd" >&2
+      exit 1
+    fi
     echo "sshd reloaded successfully."
   else
     echo "Warning: PID file $PIDFILE not found. Start sshd manually." >&2

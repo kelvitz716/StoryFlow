@@ -258,3 +258,151 @@ def test_valid_listen_applied():
 
         assert "ListenAddress 100.64.0.42" in content
         assert content.count("ListenAddress 100.64.0.42") == 1
+
+
+def test_match_block_scoping_and_idempotency():
+    """Verify Match scoping: all new directives placed before Match, directives inside Match untouched, and second run is identical."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_path = os.path.join(tmpdir, "sshd_config")
+        keys_path = os.path.join(tmpdir, "authorized_keys")
+        stub_sshd = os.path.join(tmpdir, "stub_sshd")
+
+        with open(stub_sshd, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(stub_sshd, 0o755)
+
+        with open(keys_path, "w") as f:
+            f.write("ssh-ed25519 AAA... user@host\n")
+
+        # Config where X11Forwarding is global, but PasswordAuthentication only exists inside Match
+        initial_config = (
+            "# Global section\n"
+            "Port 8022\n"
+            "X11Forwarding yes\n"
+            "\n"
+            "Match User backup\n"
+            "    PasswordAuthentication yes\n"
+            "    AllowTcpForwarding no\n"
+        )
+        with open(config_path, "w") as f:
+            f.write(initial_config)
+
+        env = os.environ.copy()
+        env["SSHD_CONFIG"] = config_path
+        env["AUTH_KEYS"] = keys_path
+        env["SSHD_BIN"] = stub_sshd
+        env["RELOAD"] = "0"
+
+        # Run 1
+        res = subprocess.run(["sh", SCRIPT_PATH], env=env, capture_output=True, text=True)
+        assert res.returncode == 0, f"Error: {res.stderr}"
+
+        with open(config_path, "r") as f:
+            content_run1 = f.read()
+
+        match_idx = content_run1.find("Match User backup")
+        assert match_idx != -1
+
+        # 1. All new directives are placed BEFORE the first Match line
+        for directive in EXPECTED_DIRECTIVES:
+            dir_idx = content_run1.find(directive)
+            assert dir_idx != -1, f"Missing {directive}"
+            assert dir_idx < match_idx, f"{directive} was placed after Match line"
+
+        # 2. Directive that exists only inside Match block remains untouched
+        match_section = content_run1[match_idx:]
+        assert "    PasswordAuthentication yes" in match_section
+        assert "    AllowTcpForwarding no" in match_section
+
+        # 3. Global PasswordAuthentication no was added before Match
+        global_section = content_run1[:match_idx]
+        assert "PasswordAuthentication no" in global_section
+
+        # 4. Global X11Forwarding yes was replaced in place
+        assert "X11Forwarding yes" not in global_section
+        assert "X11Forwarding no" in global_section
+
+        # 5. Second run is idempotent
+        res2 = subprocess.run(["sh", SCRIPT_PATH], env=env, capture_output=True, text=True)
+        assert res2.returncode == 0
+
+        with open(config_path, "r") as f:
+            content_run2 = f.read()
+
+        assert content_run1 == content_run2
+
+
+def test_reload_dead_pid_fails():
+    """Verify reload fails when pid is dead after kill -HUP."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_path = os.path.join(tmpdir, "sshd_config")
+        keys_path = os.path.join(tmpdir, "authorized_keys")
+        stub_sshd = os.path.join(tmpdir, "stub_sshd")
+        pid_file = os.path.join(tmpdir, "sshd.pid")
+
+        with open(stub_sshd, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(stub_sshd, 0o755)
+
+        with open(keys_path, "w") as f:
+            f.write("ssh-ed25519 AAA... user@host\n")
+
+        with open(config_path, "w") as f:
+            f.write("Port 8022\n")
+
+        # Write a PID that is not running
+        with open(pid_file, "w") as f:
+            f.write("999999")
+
+        # Kill the sleep process before or let HUP terminate it
+        # Note: sleep terminates upon SIGHUP
+        env = os.environ.copy()
+        env["SSHD_CONFIG"] = config_path
+        env["AUTH_KEYS"] = keys_path
+        env["SSHD_BIN"] = stub_sshd
+        env["PIDFILE"] = pid_file
+        env["RELOAD"] = "1"
+
+        res = subprocess.run(["sh", SCRIPT_PATH], env=env, capture_output=True, text=True)
+        assert res.returncode == 1
+        assert "sshd is not running. Start it from the Termux app with: sshd" in res.stderr
+
+
+def test_reload_alive_pid_succeeds():
+    """Verify reload succeeds when pid remains alive after kill -HUP."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_path = os.path.join(tmpdir, "sshd_config")
+        keys_path = os.path.join(tmpdir, "authorized_keys")
+        stub_sshd = os.path.join(tmpdir, "stub_sshd")
+        pid_file = os.path.join(tmpdir, "sshd.pid")
+
+        with open(stub_sshd, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(stub_sshd, 0o755)
+
+        with open(keys_path, "w") as f:
+            f.write("ssh-ed25519 AAA... user@host\n")
+
+        with open(config_path, "w") as f:
+            f.write("Port 8022\n")
+
+        # Spawn a process that traps and ignores HUP
+        proc = subprocess.Popen(["sh", "-c", "trap '' HUP; while true; do sleep 1; done"])
+        try:
+            with open(pid_file, "w") as f:
+                f.write(str(proc.pid))
+
+            env = os.environ.copy()
+            env["SSHD_CONFIG"] = config_path
+            env["AUTH_KEYS"] = keys_path
+            env["SSHD_BIN"] = stub_sshd
+            env["PIDFILE"] = pid_file
+            env["RELOAD"] = "1"
+
+            res = subprocess.run(["sh", SCRIPT_PATH], env=env, capture_output=True, text=True)
+            assert res.returncode == 0
+            assert "sshd reloaded successfully" in res.stdout
+        finally:
+            proc.kill()
+            proc.wait()
+
