@@ -117,8 +117,19 @@ chmod 600 .env
 echo "🔨 Building Docker image (this may take a minute)..."
 docker build -t storyflow .
 
-# 4. Prepare directories
-mkdir -p downloads cookies sessions
+# 4. Prepare directories and permissions
+mkdir -p downloads cookies sessions data logs
+echo "🔒 Setting permissions for volumes (UID 1000)..."
+docker run --rm \
+    -v "$(pwd)/downloads:/downloads" \
+    -v "$(pwd)/cookies:/cookies" \
+    -v "$(pwd)/sessions:/sessions" \
+    -v "$(pwd)/data:/data" \
+    -v "$(pwd)/logs:/logs" \
+    alpine sh -c "chown -R 1000:1000 /downloads /cookies /sessions /data /logs" || echo "⚠️  Warning: Permission fix failed."
+
+# Ensure external proxy network exists
+docker network create proxy_net 2>/dev/null || true
 
 # 5. Run Container via docker compose (reads docker-compose.yml for security settings)
 echo "🏃 Starting container via docker compose..."

@@ -14,6 +14,35 @@ def test_deploy_script_env_permissions_and_no_hardcoded_admin():
     assert "618026357" not in content
 
 
+def test_deploy_script_pre_compose_preparation():
+    """Verify deploy.sh prepares directories including logs, chowns UID 1000, and creates proxy_net before compose up."""
+    deploy_path = os.path.join(os.path.dirname(__file__), "..", "deploy.sh")
+    with open(deploy_path, "r") as f:
+        content = f.read()
+
+    # 1. Assert mkdir -p downloads cookies sessions data logs
+    assert "mkdir -p downloads cookies sessions data logs" in content
+
+    # 2. Assert alpine chown -R 1000:1000 including logs
+    assert "chown -R 1000:1000 /downloads /cookies /sessions /data /logs" in content
+    assert "Warning: Permission fix failed" in content
+
+    # 3. Assert proxy_net network creation
+    assert "docker network create proxy_net" in content
+
+    # 4. Assert all three come before docker compose up
+    compose_idx = content.find("docker compose up")
+    assert compose_idx != -1
+
+    mkdir_idx = content.find("mkdir -p downloads cookies sessions data logs")
+    chown_idx = content.find("chown -R 1000:1000 /downloads /cookies /sessions /data /logs")
+    network_idx = content.find("docker network create proxy_net")
+
+    assert mkdir_idx < compose_idx
+    assert chown_idx < compose_idx
+    assert network_idx < compose_idx
+
+
 def test_update_oci_script_hardened():
     """Verify update_oci.sh has no ssh -A, uses HTTPS remote, and validates REF."""
     oci_script_path = os.path.join(os.path.dirname(__file__), "..", "update_oci.sh")
