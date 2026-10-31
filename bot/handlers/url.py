@@ -5,7 +5,7 @@ import random
 import logging
 import asyncio
 from telegram import Update
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, TimedOut, NetworkError
 from telegram.ext import ContextTypes
 
 from auth.access import AccessManager
@@ -395,6 +395,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 status_msg = await msg.reply_text(f"{proc_msg}")
             except RetryAfter as _e:
                 coord.open_send_gate(chat_id, getattr(_e, "retry_after", 1))
+                is_backlog = True
+                status_msg = None
+            except (TimedOut, NetworkError) as _te:
+                # Mobile connection briefly dropped — queue without a status message.
+                # The job will still run; the user won't see a "processing" reply but
+                # they will get the media when it completes.
+                logging.warning(
+                    f"handle_url: reply_text timed out for chat {chat_id} ({type(_te).__name__}); "
+                    "queuing without status message"
+                )
                 is_backlog = True
                 status_msg = None
         

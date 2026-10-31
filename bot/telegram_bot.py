@@ -187,7 +187,15 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     snapchat = SnapchatDownloader(output_path=download_path)
     gallery_dl = GalleryDLDownloader(output_path=download_path, cookie_path=cookie_path, admin_id=admin_id)
     
-    app = Application.builder().token(token).read_timeout(60).write_timeout(60).build()
+    app = (
+        Application.builder()
+        .token(token)
+        .read_timeout(60)
+        .write_timeout(120)   # large files can take a while to upload
+        .connect_timeout(15)  # mobile connections can be slow to establish
+        .pool_timeout(15)     # prevent thread-pool stalls on mobile networks
+        .build()
+    )
     
     async def post_init(application):
         global mtproto_client, download_queue
@@ -279,4 +287,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     app.add_error_handler(error_handler)
 
     logging.info("🤖 StoryFlow Bot started!")
-    app.run_polling()
+    app.run_polling(
+        timeout=20,               # long-poll timeout — keep short on mobile so dropped connections are detected quickly
+        drop_pending_updates=False,  # process queued messages after restart (backlog mode handles rate limits)
+    )
