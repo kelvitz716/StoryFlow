@@ -17,15 +17,16 @@ fi
 echo "🔨 Instructing OCI VM to pull from Git and rebuild..."
 echo "Target ref: $REF on $OCI_HOST"
 
-# Optional signed commit/tag check command
+# Optional signed commit/tag check command (K4)
 VERIFY_CMD=""
 if [ "${REQUIRE_SIGNED:-0}" = "1" ]; then
-    VERIFY_CMD="git verify-commit HEAD 2>/dev/null || git verify-tag HEAD 2>/dev/null || (echo '❌ Verification failed: commit/tag not signed' >&2 && exit 1); "
+    VERIFY_CMD="if git rev-parse -q --verify \"refs/tags/$REF\" >/dev/null 2>&1; then git verify-tag \"$REF\" || { echo '❌ signature verification failed' >&2; exit 1; }; else git verify-commit HEAD || { echo '❌ signature verification failed' >&2; exit 1; }; fi; "
 fi
 
 # Note: -A (SSH agent forwarding) removed for security (G5)
 ssh -i "$OCI_KEY" "opc@$OCI_HOST" \
-  "which git >/dev/null 2>&1 || sudo dnf install -y git || sudo yum install -y git; \
+  "set -e; \
+   which git >/dev/null 2>&1 || sudo dnf install -y git || sudo yum install -y git; \
    cd /home/opc/data/storyflow; \
    if [ ! -d .git ]; then \
        git init && git remote add origin '$OCI_GIT_URL'; \

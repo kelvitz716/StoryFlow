@@ -78,3 +78,28 @@ def test_entrypoint_extractor_auto_update_flag():
     assert "pip install --no-cache-dir --upgrade yt-dlp gallery-dl" in content
     assert "else" in content
     assert "pinned" in content.lower() or "EXTRACTOR_AUTO_UPDATE=false" in content
+
+
+def test_update_oci_require_signed_remote_command():
+    """Verify update_oci.sh remote command structure: starts with set -e, no subshell exit, and verification before docker rm."""
+    oci_script_path = os.path.join(os.path.dirname(__file__), "..", "update_oci.sh")
+    with open(oci_script_path, "r") as f:
+        content = f.read()
+
+    # 1. Remote command starts with set -e;
+    assert '"set -e;' in content
+
+    # 2. No subshell-exit pattern like (echo ... && exit 1)
+    assert "(echo '❌ Verification failed: commit/tag not signed' >&2 && exit 1)" not in content
+    assert "exit 1; }" in content
+
+    # 3. Verify-tag or verify-commit logic present
+    assert "git verify-tag" in content
+    assert "git verify-commit" in content
+
+    # 4. Verification must come before docker rm
+    verify_idx = content.find("${VERIFY_CMD}")
+    docker_rm_idx = content.find("docker rm -f storyflow_app")
+    assert verify_idx != -1
+    assert docker_rm_idx != -1
+    assert verify_idx < docker_rm_idx
