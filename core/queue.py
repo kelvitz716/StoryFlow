@@ -3,12 +3,15 @@
 import asyncio
 import logging
 import os
+import re
 import time
 import shutil
-from core.storage import is_storage_critical, format_storage_report
+from core.storage import is_storage_critical
 from core.database import db
+from core.config import _env_int, _env_float
+from downloaders.registry import DownloaderRegistry
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Optional, Callable
 from enum import Enum
 from datetime import datetime
 import uuid
@@ -57,8 +60,8 @@ class DownloadJob:
             "error": self.error,
         }
 
-    def save_to_db(self):
-        """Upsert the current state of the job to SQLite."""
+    def save_to_db_sync(self):
+        """Synchronously upsert the current state of the job to SQLite."""
         try:
             with db.get_conn() as conn:
                 conn.execute('''
@@ -70,6 +73,10 @@ class DownloadJob:
                 ''', (self.job_id, self.user_id, self.chat_id, self.message_id, self.url, self.platform, self.status.value))
         except Exception as e:
             logging.error(f"Failed to save job {self.job_id} to DB: {e}")
+
+    async def save_to_db(self):
+        """Async-safe upsert of the job state to SQLite offloaded to a thread pool."""
+        await asyncio.to_thread(self.save_to_db_sync)
 
 
 class DownloadQueue:
@@ -83,22 +90,43 @@ class DownloadQueue:
         max_per_user: int = 20,
         status_callback: Optional[Callable] = None,
         bot: Optional[Any] = None,
-        notice_callback: Optional[Callable] = None
+        notice_callback: Optional[Callable] = None,
+        downloader_registry: Optional[DownloaderRegistry] = None,
+        download_path: Optional[str] = None
     ):
         self.max_concurrent = max(1, max_concurrent)
         self.max_per_user = max(1, max_per_user)
         self.status_callback = status_callback
         self.bot = bot
         self.notice_callback = notice_callback
-        self.download_path = os.getenv('DOWNLOAD_PATH', './downloads')
+        self.download_path = download_path or os.getenv('DOWNLOAD_PATH', './downloads')
         
-        self.snapchat = None
-        self.gallery_dl = None
+        self.registry = downloader_registry or DownloaderRegistry()
         
         self._queue: asyncio.Queue = asyncio.Queue()
         self._jobs: Dict[str, DownloadJob] = {}
         self._workers: list = []
         self._running = False
+        # Strong reference set: prevents fire-and-forget status tasks from
+        # being garbage-collected before they complete (CPython GC may collect
+        # tasks that have no references even while scheduled).
+        self._active_status_tasks: set = set()
+
+    @property
+    def snapchat(self):
+        return self.registry.snapchat
+
+    @snapchat.setter
+    def snapchat(self, val):
+        self.registry.snapchat = val
+
+    @property
+    def gallery_dl(self):
+        return self.registry.gallery_dl
+
+    @gallery_dl.setter
+    def gallery_dl(self, val):
+        self.registry.gallery_dl = val
         
     async def start(self):
         """Start the queue workers."""
@@ -140,7 +168,8 @@ class DownloadQueue:
                             parse_mode='Markdown'
                         )
                     except Exception as e:
-                        logging.warning(f"Could not send recovery message to {chat_id}: {e}")
+                        masked_chat = f"{str(chat_id)[:3]}***{str(chat_id)[-3:]}" if len(str(chat_id)) > 6 else "***"
+                        logging.warning(f"Could not send recovery message to {masked_chat}: {e}")
         except Exception as e:
             logging.error(f"Detailed recovery sweep failed: {e}")
     
@@ -178,7 +207,8 @@ class DownloadQueue:
         
         for existing_job in active_jobs:
             if existing_job.url == url:
-                logging.info(f"♻️ Job {existing_job.job_id} already active for URL: {url} (User: {user_id})")
+                masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
+                logging.info(f"♻️ Job {existing_job.job_id} already active for {existing_job.platform} (User: {masked_user})")
                 existing_job.is_already_active = True
                 return existing_job
 
@@ -194,7 +224,7 @@ class DownloadQueue:
             job_dir=os.path.join(self.download_path, job_id)
         )
         
-        job.save_to_db()
+        await job.save_to_db()
         self._jobs[job_id] = job
         await self._queue.put((job, upload_func))
         
@@ -238,12 +268,13 @@ class DownloadQueue:
                     if "Event loop is closed" in str(e): break
                     raise
                 
+                job_start_time = time.monotonic()
                 logging.info(f"⚙️ Worker {worker_id} processing job {job.job_id}")
                 
                 try:
                     job.status = JobStatus.DOWNLOADING
                     job.message = "Downloading content..."
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                     
                     if job.job_dir: os.makedirs(job.job_dir, exist_ok=True)
@@ -255,7 +286,7 @@ class DownloadQueue:
                         job.completed_at = datetime.now()
                         job.error = f"Storage Full ({current_usage}%)"
                         job.message = "Disk space is almost full. Purge system to continue."
-                        job.save_to_db()
+                        await job.save_to_db()
                         await self._notify_status(job)
                         continue
 
@@ -268,15 +299,17 @@ class DownloadQueue:
                         last_update = current_time
                         if self.status_callback:
                             task = asyncio.create_task(self.status_callback(job))
-                            task.add_done_callback(lambda t: t.exception())
+                            self._active_status_tasks.add(task)
+                            task.add_done_callback(self._active_status_tasks.discard)
+                            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
-                    is_spotlight = "/spotlight/" in job.url
-                    if job.platform == "Snapchat" and self.snapchat and not is_spotlight:
-                         result = await self.snapchat.download(job.url, job.user_id, job.job_id)
-                    elif self.gallery_dl:
-                         result = await self.gallery_dl.download(job.url, job.platform, job.user_id, job.job_id, progress_callback=progress_callback)
-                    else:
-                         result = {'success': False, 'error': 'Downloader not initialized'}
+                    result = await self.registry.download(
+                        url=job.url,
+                        platform=job.platform,
+                        user_id=job.user_id,
+                        job_id=job.job_id,
+                        progress_callback=progress_callback
+                    )
                     
                     job.limit_reached = bool(result.get('limit_reached', False))
                     
@@ -286,7 +319,7 @@ class DownloadQueue:
                         # Only store the sanitised error key, never raw stderr
                         job.error = result.get('error', 'Download failed')
                         job.message = f"Failed: {job.error}"
-                        job.save_to_db()
+                        await job.save_to_db()
                         await self._notify_status(job)
                         continue
                     
@@ -295,13 +328,13 @@ class DownloadQueue:
                         job.status = JobStatus.COMPLETED
                         job.completed_at = datetime.now()
                         job.message = result.get('message', 'No content found')
-                        job.save_to_db()
+                        await job.save_to_db()
                         await self._notify_status(job)
                         continue
                     
                     job.status = JobStatus.UPLOADING
                     job.message = f"Uploading {len(job.files)} files..."
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                     
                     await upload_func(job.files)
@@ -309,11 +342,13 @@ class DownloadQueue:
                     job.status = JobStatus.COMPLETED
                     job.completed_at = datetime.now()
                     job.message = f"Delivered {len(job.files)} files"
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
-
                     if job.limit_reached:
                         await self._send_limit_notice(job)
+
+                    elapsed = time.monotonic() - job_start_time
+                    logging.info(f"✅ Job {job.job_id} ({job.platform}) completed in {elapsed:.1f}s")
                     
                 except Exception as e:
                     logging.error(f"Job {job.job_id} failed with exception: {e}")
@@ -322,12 +357,12 @@ class DownloadQueue:
                     # Do NOT expose internal exception details to users
                     job.error = "Download failed due to an internal error"
                     job.message = "Download failed"
-                    job.save_to_db()
+                    await job.save_to_db()
                     await self._notify_status(job)
                 
                 finally:
                     if job and job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
-                        self._cleanup_job(job.job_id)
+                        await self._cleanup_job(job.job_id)
                     self._queue.task_done()
             
             except asyncio.CancelledError: break
@@ -337,11 +372,13 @@ class DownloadQueue:
             except Exception as e:
                 logging.error(f"Worker {worker_id} error: {e}")
     
-    def _cleanup_job(self, job_id: str):
+    async def _cleanup_job(self, job_id: str):
         job = self._jobs.pop(job_id, None)
         if job and job.job_dir and os.path.exists(job.job_dir):
-            try: shutil.rmtree(job.job_dir)
-            except Exception as e: logging.error(f"⚠️ Failed to cleanup directory {job.job_dir}: {e}")
+            try:
+                await asyncio.to_thread(shutil.rmtree, job.job_dir, True)
+            except Exception as e:
+                logging.error(f"⚠️ Failed to cleanup directory {job.job_dir}: {e}")
     
     async def _notify_status(self, job: DownloadJob):
         if self.status_callback:
@@ -412,9 +449,12 @@ class DownloadQueue:
                         try:
                             if current_time - entry.stat().st_mtime > 7200:
                                 shutil.rmtree(entry.path)
-                        except: pass
+                                logging.debug(f"Cleaned up stale job folder {entry.path}")
+                        except Exception as e:
+                            logging.debug(f"Failed to remove stale job folder {entry.path}: {e}")
             except asyncio.CancelledError: break
-            except Exception:
+            except Exception as e:
+                logging.debug(f"Background cleanup error: {e}")
                 await asyncio.sleep(60)
 
     def _startup_sweep(self):
@@ -422,12 +462,17 @@ class DownloadQueue:
         count = 0
         try:
             for entry in os.scandir(self.download_path):
-                if entry.is_dir():
+                # Only sweep directories matching the 8-character hex job ID format
+                if entry.is_dir() and re.fullmatch(r'[0-9a-f]{8}', entry.name):
                     try:
                         shutil.rmtree(entry.path)
                         count += 1
-                    except: pass
-        except: pass
+                    except Exception as e:
+                        logging.debug(f"Startup sweep failed for {entry.path}: {e}")
+            if count > 0:
+                logging.info(f"🧹 Startup sweep: removed {count} orphaned job directories.")
+        except Exception as e:
+            logging.debug(f"Startup sweep error: {e}")
 
 
 download_queue: Optional[DownloadQueue] = None
@@ -437,49 +482,6 @@ def get_queue() -> DownloadQueue:
     if download_queue is None:
         download_queue = DownloadQueue()
     return download_queue
-
-def _env_int(name: str, default: int, lo: int, hi: int) -> int:
-    """
-    Read an integer from environment variable `name`, log a warning on empty or
-    non-numeric value, and clamp the resulting integer to [lo, hi].
-    """
-    raw = os.getenv(name)
-    if raw is None:
-        val = default
-    elif not raw.strip():
-        logging.warning(f"Empty value for environment variable {name}, using default {default}")
-        val = default
-    else:
-        try:
-            val = int(raw.strip())
-        except (ValueError, TypeError):
-            logging.warning(
-                f"Non-numeric value {raw!r} for environment variable {name}, using default {default}"
-            )
-            val = default
-    return max(int(lo), min(int(hi), int(val)))
-
-
-def _env_float(name: str, default: float, lo: float, hi: float) -> float:
-    """
-    Read a float from environment variable `name`, log a warning on empty or
-    non-numeric value, and clamp the resulting float to [lo, hi].
-    """
-    raw = os.getenv(name)
-    if raw is None:
-        val = default
-    elif not raw.strip():
-        logging.warning(f"Empty value for environment variable {name}, using default {default}")
-        val = default
-    else:
-        try:
-            val = float(raw.strip())
-        except (ValueError, TypeError):
-            logging.warning(
-                f"Non-numeric value {raw!r} for environment variable {name}, using default {default}"
-            )
-            val = default
-    return max(float(lo), min(float(hi), float(val)))
 
 
 async def init_queue(
@@ -504,15 +506,18 @@ async def init_queue(
     else:
         max_per_user = max(1, max_per_user)
 
+    registry = DownloaderRegistry(
+        snapchat=snapchat_downloader,
+        gallery_dl=gallery_dl_downloader
+    )
     download_queue = DownloadQueue(
         max_concurrent=max_concurrent,
         max_per_user=max_per_user,
         status_callback=status_callback,
         bot=bot,
-        notice_callback=notice_callback
+        notice_callback=notice_callback,
+        downloader_registry=registry
     )
-    download_queue.snapchat = snapchat_downloader
-    download_queue.gallery_dl = gallery_dl_downloader
     await download_queue.start()
     return download_queue
 

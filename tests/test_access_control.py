@@ -44,6 +44,7 @@ def _make_access_manager(admin_id: str = "9999", allowed: list = None) -> Access
     touch the real data/storyflow.db during tests.
     """
     from unittest.mock import patch as _patch
+    from contextlib import contextmanager
     import sqlite3
 
     # We need a real (in-memory) database for AccessManager to work
@@ -54,7 +55,12 @@ def _make_access_manager(admin_id: str = "9999", allowed: list = None) -> Access
     conn.commit()
 
     mock_db = MagicMock()
-    mock_db.get_conn = MagicMock(return_value=conn)
+
+    @contextmanager
+    def _get_conn():
+        yield conn
+
+    mock_db.get_conn = _get_conn
 
     with _patch('auth.access.db', mock_db):
         am = AccessManager(admin_id=admin_id)
@@ -298,8 +304,8 @@ class TestHandleUrlG1:
         dq.add_job = AsyncMock(return_value=None)
 
         from bot.handlers import handle_url
-        with patch("bot.handlers.resolve_shortlink", return_value=None), \
-             patch("bot.handlers.identify_platform", return_value="Generic"):
+        with patch("bot.handlers.url.resolve_shortlink", return_value=None), \
+             patch("bot.handlers.url.identify_platform", return_value="Generic"):
             await handle_url(update, ctx, am, dq)
 
         update.message.reply_text.assert_not_called()
@@ -322,7 +328,7 @@ class TestHandleUrlG1:
         dq.add_job = AsyncMock(return_value=None)
 
         from bot.handlers import handle_url
-        with patch("bot.handlers.resolve_shortlink", return_value=None):
+        with patch("bot.handlers.url.resolve_shortlink", return_value=None):
             await handle_url(update, ctx, am, dq)
 
         update.effective_message.reply_text.assert_called_once()
@@ -345,12 +351,12 @@ class TestHandleUrlG1:
         coord.sleep_func = AsyncMock()
 
         from bot.handlers import handle_url
-        with patch("bot.handlers.resolve_shortlink", return_value=None), \
-             patch("bot.handlers.identify_platform", return_value="Instagram"), \
-             patch("bot.handlers.register_job_message"), \
-             patch("bot.handlers.register_backlog_job"), \
-             patch("bot.handlers.batch_upload_media", new=AsyncMock()), \
-             patch("bot.handlers.get_edit_coordinator", return_value=coord):
+        with patch("bot.handlers.url.resolve_shortlink", return_value=None), \
+             patch("bot.handlers.url.identify_platform", return_value="Instagram"), \
+             patch("bot.handlers.url.register_job_message"), \
+             patch("bot.handlers.url.register_backlog_job"), \
+             patch("bot.handlers.url.batch_upload_media", new=AsyncMock()), \
+             patch("bot.handlers.url.get_edit_coordinator", return_value=coord):
             await handle_url(update, ctx, am, dq)
 
         # No rejection reply was sent

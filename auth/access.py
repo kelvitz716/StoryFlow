@@ -1,7 +1,9 @@
 """
 Access Manager for controlling user access to the bot using SQLite.
 """
+import time
 import logging
+from collections import OrderedDict
 from typing import List
 from core.database import db
 
@@ -18,6 +20,11 @@ class AccessManager:
         # Support comma-separated admin IDs
         self.admin_ids = [aid.strip() for aid in str(admin_id).split(",") if aid.strip()]
         self.admin_id = self.admin_ids[0] if self.admin_ids else ""
+        # LRU-bounded TTL cache for is_allowed: uid -> (is_allowed_bool, expiry_timestamp)
+        # Capped at _CACHE_MAX_SIZE entries to prevent unbounded growth on long-running instances.
+        self._cache: OrderedDict = OrderedDict()
+        self._cache_ttl: float = 60.0
+        self._CACHE_MAX_SIZE: int = 2000
         # Ensure admins are always in the database for tracking purposes
         self._ensure_admin()
 
@@ -43,14 +50,28 @@ class AccessManager:
         return str(user_id) in self.ANONYMOUS_IDS
 
     def is_allowed(self, user_id: str) -> bool:
-        """Check if a user is allowed to use the bot."""
+        """Check if a user is allowed to use the bot (TTL cached, LRU-bounded)."""
         uid = str(user_id)
         if uid in self.admin_ids:
             return True
+
+        now = time.time()
+        cached = self._cache.get(uid)
+        if cached is not None and cached[1] > now:
+            # Touch: move to most-recently-used position
+            self._cache.move_to_end(uid)
+            return cached[0]
+
         try:
             with db.get_conn() as conn:
                 cur = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (uid,))
-                return cur.fetchone() is not None
+                allowed = cur.fetchone() is not None
+                self._cache[uid] = (allowed, now + self._cache_ttl)
+                self._cache.move_to_end(uid)
+                # Evict oldest entry when over capacity
+                if len(self._cache) > self._CACHE_MAX_SIZE:
+                    self._cache.popitem(last=False)
+                return allowed
         except Exception as e:
             logging.error(f"Database error checking user access: {e}")
             return False
@@ -58,12 +79,14 @@ class AccessManager:
     def add_user(self, user_id: str) -> bool:
         """Add a user to the allowed list."""
         uid = str(user_id)
+        self._cache.pop(uid, None)
         try:
             with db.get_conn() as conn:
                 cur = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (uid,))
                 if cur.fetchone() is not None:
                     return False
                 conn.execute("INSERT INTO users (user_id) VALUES (?)", (uid,))
+                self._cache[uid] = (True, time.time() + self._cache_ttl)
                 return True
         except Exception as e:
             logging.error(f"Failed to add user {uid}: {e}")
@@ -72,10 +95,14 @@ class AccessManager:
     def remove_user(self, user_id: str) -> bool:
         """Remove a user from the allowed list."""
         uid = str(user_id)
+        self._cache.pop(uid, None)
         try:
             with db.get_conn() as conn:
                 cur = conn.execute("DELETE FROM users WHERE user_id = ?", (uid,))
-                return cur.rowcount > 0
+                success = cur.rowcount > 0
+                if success:
+                    self._cache[uid] = (False, time.time() + self._cache_ttl)
+                return success
         except Exception as e:
             logging.error(f"Failed to remove user {uid}: {e}")
             return False

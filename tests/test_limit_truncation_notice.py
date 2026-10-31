@@ -36,7 +36,7 @@ async def test_limit_reached_produces_exactly_one_notice_after_upload():
     await queue._queue.put((job, upload_mock))
 
     worker = asyncio.create_task(queue._worker(0))
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(queue._queue.join(), timeout=5.0)
     queue._running = False
     worker.cancel()
     try:
@@ -91,7 +91,7 @@ async def test_normal_result_produces_no_notice():
     await queue._queue.put((job, upload_mock))
 
     worker = asyncio.create_task(queue._worker(0))
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(queue._queue.join(), timeout=5.0)
     queue._running = False
     worker.cancel()
     try:
@@ -143,7 +143,7 @@ async def test_admin_limit_reached_notice_includes_exact_numbers(monkeypatch):
     await queue._queue.put((job, upload_mock))
 
     worker = asyncio.create_task(queue._worker(0))
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(queue._queue.join(), timeout=5.0)
     queue._running = False
     worker.cancel()
     try:

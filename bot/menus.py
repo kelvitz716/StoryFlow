@@ -64,7 +64,7 @@ async def send_help_menu(target, is_new_message: bool = True):
     else:
         await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
-async def send_cookies_menu(target, user_id: str, cookie_manager, is_new_message: bool = False):
+async def send_cookies_menu(target, user_id: str, cookie_manager, is_new_message: bool = False, notice: Optional[str] = None):
     """Send the cookie management menu."""
     cookies = cookie_manager.list_cookies(user_id) if cookie_manager else []
     
@@ -89,6 +89,8 @@ async def send_cookies_menu(target, user_id: str, cookie_manager, is_new_message
             "Cookies let you download content that requires login\n"
             "(like Instagram stories or Facebook reels)."
         )
+    if notice:
+        text = f"{notice}\n\n{text}"
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Add Instagram", callback_data="cookies_instagram"),

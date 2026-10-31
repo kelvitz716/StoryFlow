@@ -18,10 +18,10 @@ import logging
 import asyncio
 from urllib.parse import urlparse, urljoin
 import requests
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional
 
 from core.rate_limiter import RateLimiter
-from core.queue import _env_int
+from core.config import _env_int
 from core.storage import is_storage_critical
 from core.platform import extract_snapchat_username, _valid_snapchat_username
 from core.security import sanitize_filename, is_safe_url
@@ -462,7 +462,12 @@ class SnapchatDownloader(BaseDownloader):
             logging.error(f"❌ Storage critical ({usage}%). Skipping file {index} for @{username}.")
             return None
 
-        # 2. Wall-clock deadline
+        # 2. SSRF guard
+        if not is_safe_url(media_url):
+            logging.warning("⚠️ Skipping Snapchat media URL that failed SSRF check")
+            return None
+
+        # 3. Wall-clock deadline
         start_time = time.time()
         deadline = start_time + _DOWNLOAD_TIMEOUT_SECONDS
 
@@ -485,7 +490,7 @@ class SnapchatDownloader(BaseDownloader):
             if response is None:
                 return None
 
-            # 3. Content-Length check
+            # 4. Content-Length check
             max_bytes = _MAX_FILE_SIZE_MB * 1024 * 1024
             cl_header = response.headers.get("Content-Length")
             if cl_header:
@@ -501,7 +506,7 @@ class SnapchatDownloader(BaseDownloader):
 
             response.raise_for_status()
 
-            # 4. Stream and count bytes with wall-clock deadline
+            # 5. Stream and count bytes with wall-clock deadline
             total_bytes = 0
             with open(filename, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -533,6 +538,7 @@ class SnapchatDownloader(BaseDownloader):
                     response.close()
                 except Exception:
                     pass
+
 
     # ------------------------------------------------------------------
     # Backwards-compat alias (queue.py calls download_stories directly

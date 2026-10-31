@@ -56,7 +56,9 @@ class SensitiveDataFilter(logging.Filter):
         'bot_token': re.compile(r'\d{9,10}:[A-Za-z0-9_-]{35}'),
         'api_hash': re.compile(r'[a-f0-9]{32}'),
         'api_id': re.compile(r'TELEGRAM_API_ID=\d+'),
-        'user_id_context': re.compile(r'(user_id["\']?\s*[:=]\s*["\']?)\d+'),
+        'user_id_context': re.compile(r'(user_id["\']?\s*[:=]\s*["\']?)-?\d+'),
+        'user_context': re.compile(r'(\b[Uu]ser:\s*)-?\d+'),
+        'cookie_file': re.compile(r'(\b[a-zA-Z]+_)(-?\d{4,})(\.txt\b)'),
     }
 
     # Replacement strings
@@ -65,6 +67,8 @@ class SensitiveDataFilter(logging.Filter):
         'api_hash': '***REDACTED-API-HASH***',
         'api_id': 'TELEGRAM_API_ID=***REDACTED***',
         'user_id_context': r'\1***REDACTED***',
+        'user_context': r'\1***REDACTED***',
+        'cookie_file': r'\1***\3',
     }
 
     def filter(self, record: logging.LogRecord) -> bool:

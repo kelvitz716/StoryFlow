@@ -5,7 +5,7 @@ import re
 import asyncio
 import logging
 from typing import Dict, Optional, Callable
-from core.queue import _env_int
+from core.config import _env_int
 
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
@@ -52,6 +52,26 @@ def _mask_id(uid: Optional[str]) -> str:
 
 from downloaders.base import BaseDownloader
 
+
+def _mask_cookie_filename(filename: Optional[str]) -> str:
+    """Mask user_id in cookie filenames (e.g. tiktok_618026357.txt -> tiktok_618***357.txt)."""
+    if not filename:
+        return ""
+    base = os.path.basename(filename)
+    if "_" in base and "." in base:
+        parts = base.split("_", 1)
+        platform_part = parts[0]
+        rest = parts[1]
+        if "." in rest:
+            uid_part, ext = rest.rsplit(".", 1)
+            if len(uid_part) > 6:
+                masked_uid = f"{uid_part[:3]}***{uid_part[-3:]}"
+            else:
+                masked_uid = "***"
+            return f"{platform_part}_{masked_uid}.{ext}"
+    return base
+
+
 class GalleryDLDownloader(BaseDownloader):
     """Handler for general media downloads using gallery-dl."""
     
@@ -66,7 +86,8 @@ class GalleryDLDownloader(BaseDownloader):
         """
         super().__init__(output_path)
         self.cookie_path = cookie_path
-        self.admin_id = admin_id
+        self.admin_ids = [aid.strip() for aid in str(admin_id).split(",") if aid.strip()] if admin_id else []
+        self.admin_id = self.admin_ids[0] if self.admin_ids else (str(admin_id) if admin_id else None)
         os.makedirs(cookie_path, exist_ok=True)
     
     async def download(self, url: str, platform: str, user_id: Optional[str] = None, job_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
@@ -149,7 +170,7 @@ class GalleryDLDownloader(BaseDownloader):
             retry_cookie = self._get_cookie_file(platform, user_id)
             if retry_cookie and retry_cookie != tried_cookie:
                 tried_cookie = retry_cookie
-                logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(retry_cookie)}...")
+                logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {_mask_cookie_filename(retry_cookie)}...")
                 command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True)
                 result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback, job_dir=job_output_path)
 
@@ -246,7 +267,7 @@ class GalleryDLDownloader(BaseDownloader):
             # Add cookies if available
             cookie_file = self._get_cookie_file(platform, user_id)
             if cookie_file:
-                logging.info(f"🍪 Using {platform} cookies with yt-dlp: {os.path.basename(cookie_file)}")
+                logging.info(f"🍪 Using {platform} cookies with yt-dlp: {_mask_cookie_filename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
 
             # URL must come after '--' to prevent argument injection
@@ -335,7 +356,7 @@ class GalleryDLDownloader(BaseDownloader):
         if use_cookies:
             cookie_file = self._get_cookie_file(platform, user_id)
             if cookie_file:
-                logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
+                logging.info(f"🍪 Using {platform} cookies: {_mask_cookie_filename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
             else:
                 # Only warn if it's a platform that typically needs cookies
@@ -346,6 +367,29 @@ class GalleryDLDownloader(BaseDownloader):
         command.extend(['--', url])
         
         return command
+
+    def _get_any_cookie(self, platform: str) -> Optional[str]:
+        """
+        Find fallback cookie for the platform (admin if opted-in, or legacy default).
+        Never return arbitrary user cookies to prevent cross-user session leakage.
+        """
+        platform_lower = re.sub(r'[^\w\-]', '', platform.lower()) or 'unknown'
+
+        # 1. Admin cookie (only when explicitly opted in via ALLOW_ADMIN_COOKIE_FALLBACK)
+        if _ALLOW_ADMIN_COOKIE_FALLBACK:
+            admin_list = self.admin_ids if self.admin_ids else ([self.admin_id] if self.admin_id else [])
+            for aid in admin_list:
+                s_admin = re.sub(r'[^\w\-]', '', str(aid)) or 'unknown'
+                admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
+                if os.path.exists(admin_cookie):
+                    return admin_cookie
+
+        # 2. Legacy default cookie (e.g. instagram.txt)
+        default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
+        if os.path.exists(default_cookie):
+            return default_cookie
+
+        return None
 
     def _get_cookie_file(self, platform: str, user_id: Optional[str]) -> Optional[str]:
         """
@@ -386,12 +430,15 @@ class GalleryDLDownloader(BaseDownloader):
             return None
 
         # 2. Admin Fallback — only when explicitly opted in
-        if _ALLOW_ADMIN_COOKIE_FALLBACK and self.admin_id and self.admin_id != user_id:
-            s_admin = _sanitize_id(self.admin_id)
-            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
-            if os.path.exists(admin_cookie):
-                logging.info(f"🍪 Cookie source: admin fallback (identity: {_mask_id(user_id)}) for {platform}")
-                return admin_cookie
+        if _ALLOW_ADMIN_COOKIE_FALLBACK:
+            admin_list = self.admin_ids if self.admin_ids else ([self.admin_id] if self.admin_id else [])
+            for aid in admin_list:
+                if str(aid) != str(user_id):
+                    s_admin = _sanitize_id(str(aid))
+                    admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
+                    if os.path.exists(admin_cookie):
+                        logging.info(f"🍪 Cookie source: admin fallback (identity: {_mask_id(user_id)}) for {platform}")
+                        return admin_cookie
 
         # 3. Legacy Default
         default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")

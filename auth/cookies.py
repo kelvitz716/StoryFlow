@@ -49,6 +49,8 @@ class CookieManager:
             cookie_path: Directory to store cookie files
         """
         self.cookie_path = cookie_path
+        # Cache for cookie expiry info: path -> (mtime, expiry_info)
+        self._expiry_cache: Dict[str, tuple] = {}
         os.makedirs(cookie_path, exist_ok=True)
     
     def _sanitize_name(self, name: str) -> str:
@@ -90,10 +92,15 @@ class CookieManager:
                 f"{s_platform}_{s_user_id}.txt"
             )
             
-            # Copy file
+            # Copy file and enforce 0600 permissions
             shutil.copy2(file_path, dest_file)
+            try:
+                os.chmod(dest_file, 0o600)
+            except OSError as e:
+                logging.debug(f"Could not set 0600 on {dest_file}: {e}")
             
-            logging.info(f"✅ Cookie file saved for user {user_id}")
+            masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
+            logging.info(f"✅ Cookie file saved for user {masked_user}")
             return {
                 'success': True,
                 'cookie_file': dest_file,
@@ -259,8 +266,10 @@ class CookieManager:
         """
         cookie_file = self.get_cookie_file(user_id, platform)
         if cookie_file and os.path.exists(cookie_file):
+            self._expiry_cache.pop(cookie_file, None)
             os.remove(cookie_file)
-            logging.info(f"🗑️ Deleted cookie file for user {user_id}")
+            masked_user = f"{str(user_id)[:3]}***{str(user_id)[-3:]}" if len(str(user_id)) > 6 else "***"
+            logging.info(f"🗑️ Deleted cookie file for user {masked_user}")
             return True
         return False
     
@@ -294,7 +303,18 @@ class CookieManager:
             if user_id is not None and uid != self._sanitize_name(user_id):
                 continue
             cookie_path = os.path.join(self.cookie_path, filename)
-            expiry_info = self._get_cookie_expiry(cookie_path, platform)
+            try:
+                mtime = os.path.getmtime(cookie_path)
+            except OSError:
+                mtime = 0.0
+
+            cached = self._expiry_cache.get(cookie_path)
+            if cached is not None and cached[0] == mtime:
+                expiry_info = cached[1]
+            else:
+                expiry_info = self._get_cookie_expiry(cookie_path, platform)
+                self._expiry_cache[cookie_path] = (mtime, expiry_info)
+
             cookies.append({
                 'platform': platform,
                 'user_id': uid,

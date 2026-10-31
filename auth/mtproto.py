@@ -9,7 +9,16 @@ from typing import Optional
 PYROGRAM_AVAILABLE = None
 Client = None
 types = None
-from pyrogram.errors import FloodWait
+
+# FloodWait may not be available if Pyrogram isn't installed.
+# Provide a stub so that exception handlers referencing FloodWait
+# never raise NameError even in Pyrogram-free deployments.
+try:
+    from pyrogram.errors import FloodWait
+except ImportError:
+    class FloodWait(Exception):  # type: ignore[no-redef]
+        """Stub used when Pyrogram is not installed."""
+        value: int = 0
 
 def _ensure_pyrogram():
     """Import pyrogram only when needed to avoid early event loop errors."""
@@ -205,7 +214,7 @@ class MTProtoClient:
             if self.client:
                 try:
                     await self.client.disconnect()
-                except:
+                except Exception:
                     pass
             return False
     
@@ -215,7 +224,7 @@ class MTProtoClient:
         if self.code_callback:
             logging.info("📲 Requesting authentication code via callback...")
             code = await self.code_callback()
-            logging.debug(f"✅ Code received from callback")
+            logging.debug("✅ Code received from callback")
             return code
         else:
             # Fallback to console input (shouldn't happen in bot mode)
@@ -227,7 +236,7 @@ class MTProtoClient:
         if self.password_callback:
             logging.info("🔐 Requesting 2FA password via callback...")
             password = await self.password_callback()
-            logging.debug(f"✅ Password received from callback")
+            logging.debug("✅ Password received from callback")
             return password
         else:
             # Fallback to console input (shouldn't happen in bot mode)
@@ -277,25 +286,34 @@ class MTProtoClient:
             ext = os.path.splitext(file_path)[1].lower()
             is_video = ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
             
-            if is_video:
-                await self.client.send_video(
-                    chat_id=chat_id,
-                    video=file_path,
-                    caption=caption,
-                    reply_to_message_id=reply_to_message_id,
-                    progress=progress_callback or self._default_progress
-                )
-            else:
-                await self.client.send_document(
-                    chat_id=chat_id,
-                    document=file_path,
-                    caption=caption,
-                    reply_to_message_id=reply_to_message_id,
-                    progress=progress_callback or self._default_progress
-                )
+            for attempt in range(3):
+                try:
+                    if is_video:
+                        await self.client.send_video(
+                            chat_id=chat_id,
+                            video=file_path,
+                            caption=caption,
+                            reply_to_message_id=reply_to_message_id,
+                            progress=progress_callback or self._default_progress
+                        )
+                    else:
+                        await self.client.send_document(
+                            chat_id=chat_id,
+                            document=file_path,
+                            caption=caption,
+                            reply_to_message_id=reply_to_message_id,
+                            progress=progress_callback or self._default_progress
+                        )
+                    logging.info("✅ MTProto upload complete!")
+                    return True
+                except FloodWait as e:
+                    logging.warning(f"⚠️ MTProto FloodWait during upload: sleeping {e.value}s (Attempt {attempt+1}/3)")
+                    await asyncio.sleep(e.value)
+                except Exception:
+                    raise
             
-            logging.info(f"✅ MTProto upload complete!")
-            return True
+            logging.error("❌ MTProto upload failed after 3 FloodWait retries")
+            return False
             
         except Exception as e:
             logging.error(f"❌ MTProto upload failed: {e}")
@@ -355,6 +373,11 @@ class MTProtoClient:
                     return True
                 except FloodWait as e:
                     logging.warning(f"⚠️ MTProto FloodWait: Sleeping {e.value}s (Attempt {attempt+1}/3)")
+                    for f in file_handles:
+                        try:
+                            f.seek(0)
+                        except Exception:
+                            pass
                     await asyncio.sleep(e.value)
                 except Exception as e:
                     logging.error(f"❌ MTProto media group failed: {e}")
@@ -371,12 +394,12 @@ class MTProtoClient:
     async def _default_progress(self, current, total):
         """Default progress callback for uploads."""
         try:
-            percent = current * 100 / total
+            percent = (current * 100 / total) if total > 0 else 0
             # Log every 10% to avoid spam
             if int(percent) % 10 == 0 and int(percent) > 0:
                 logging.info(f"📤 Uploading: {percent:.1f}% ({current/1024/1024:.1f}/{total/1024/1024:.1f} MB)")
-        except:
-            pass
+        except Exception as e:
+            logging.debug(f"Progress callback error: {e}")
 
 
 
@@ -386,7 +409,6 @@ _mtproto_client: Optional[MTProtoClient] = None
 
 def get_mtproto_client() -> Optional[MTProtoClient]:
     """Get the global MTProto client instance."""
-    global _mtproto_client
     return _mtproto_client
 
 
@@ -405,7 +427,7 @@ async def init_mtproto() -> Optional[MTProtoClient]:
         logging.info("ℹ️ MTProto not configured (optional - for files >50MB)")
         return None
     
-    success = await _mtproto_client.start()
+    await _mtproto_client.start()
     
     # Return client even if not connected (for on-demand auth later)
     return _mtproto_client

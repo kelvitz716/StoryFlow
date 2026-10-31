@@ -13,57 +13,9 @@ import logging
 from dotenv import load_dotenv
 
 from core.platform import identify_platform, extract_snapchat_username
-from core.queue import _env_int, _env_float
+from core.config import _env_int, _env_float, _validate_admin_ids, _startup_permissions
 from downloaders.snapchat import SnapchatDownloader
 from downloaders.gallery_dl import GalleryDLDownloader
-
-
-def _validate_admin_ids(raw: str) -> list[str]:
-    """
-    Parse and validate ADMIN_USER_ID.  Accepts a comma-separated list of
-    numeric Telegram IDs (positive or negative integers).
-    Calls sys.exit(1) with a clear message if any entry is non-numeric.
-    """
-    entries = [e.strip() for e in raw.split(',') if e.strip()]
-    for entry in entries:
-        if not entry.lstrip('-').isdigit():
-            print(
-                f"\u274c FATAL: ADMIN_USER_ID contains non-numeric entry: {entry!r}\n"
-                "  Expected a comma-separated list of Telegram user IDs (e.g. 123456789 or -1001234567890).",
-                file=sys.stderr
-            )
-            sys.exit(1)
-    return entries
-
-
-def _startup_permissions():
-    """
-    Apply restrictive file permissions at startup (item 9).
-    chmod 600 on .env and cookie files; chmod 700 on data directories.
-    All errors are logged as warnings and ignored.
-    """
-    import glob
-    import stat
-
-    def _chmod(path: str, mode: int):
-        try:
-            os.chmod(path, mode)
-        except Exception as exc:
-            logging.warning(f"startup permissions: could not chmod {path!r}: {exc}")
-
-    # Restrict .env
-    if os.path.exists('.env'):
-        _chmod('.env', stat.S_IRUSR | stat.S_IWUSR)  # 600
-
-    # Restrict cookie files
-    cookie_path = os.getenv('COOKIE_PATH', './cookies')
-    for f in glob.glob(os.path.join(cookie_path, '*.txt')):
-        _chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600
-
-    # Restrict sensitive directories
-    for d in [cookie_path, './sessions', './data']:
-        if os.path.isdir(d):
-            _chmod(d, stat.S_IRWXU)  # 700
 
 
 def setup_logging():

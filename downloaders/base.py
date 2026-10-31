@@ -7,7 +7,7 @@ import asyncio
 import logging
 from collections import deque
 from typing import Optional, Callable, Dict
-from core.queue import _env_int
+from core.config import _env_int
 from utils.log_sanitizer import sanitize_string
 
 # Wall-clock timeout for every subprocess call (seconds).
@@ -295,6 +295,12 @@ class BaseDownloader:
                             os.killpg(pgid, signal.SIGKILL)
                         except (ProcessLookupError, OSError):
                             pass
+                        # Reap the zombie: without wait() the OS keeps a defunct
+                        # entry in the process table until the parent exits.
+                        try:
+                            await process.wait()
+                        except Exception:
+                            pass
                     # Cancel and drain the stderr task so nothing leaks
                     if stderr_task and not stderr_task.done():
                         stderr_task.cancel()
@@ -337,7 +343,25 @@ class BaseDownloader:
                     }
                 else:
                     raise ValueError(f"Process failed with exit code {returncode}")
-
+            except asyncio.CancelledError:
+                if process and process.returncode is None:
+                    try:
+                        pgid = os.getpgid(process.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        pass
+                    # Reap the zombie
+                    try:
+                        await process.wait()
+                    except Exception:
+                        pass
+                if stderr_task and not stderr_task.done():
+                    stderr_task.cancel()
+                    try:
+                        await stderr_task
+                    except asyncio.CancelledError:
+                        pass
+                raise
             except (ValueError, TimeoutError) as e:
                 error_msg = str(e)
                 last_stderr_text = stderr_text
@@ -379,6 +403,22 @@ class BaseDownloader:
                         'success': False,
                         'error': 'Content not found',
                         'details': 'The content may have been deleted or is private',
+                        'platform': process_name,
+                        'returncode': returncode
+                    }
+
+                # Check for live stream / offline stream
+                if (
+                    'not currently live' in stderr_lower
+                    or 'is not live' in stderr_lower
+                    or 'live stream has ended' in stderr_lower
+                    or 'live stream is offline' in stderr_lower
+                    or 'live event has ended' in stderr_lower
+                ):
+                    return {
+                        'success': False,
+                        'error': 'Livestream is offline',
+                        'details': 'This livestream has ended or the channel is not currently live.',
                         'platform': process_name,
                         'returncode': returncode
                     }
