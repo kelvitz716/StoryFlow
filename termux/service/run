@@ -2,6 +2,7 @@
 # StoryFlow runit service run script
 # Place this file at: ~/.config/sv/storyflow/run (or $SVDIR/storyflow/run)
 set -e
+umask 077
 
 REPO_DIR="$HOME/StoryFlow"
 VENV="$REPO_DIR/venv"
@@ -9,5 +10,25 @@ VENV="$REPO_DIR/venv"
 export PATH="$VENV/bin:/data/data/com.termux/files/usr/bin:$PATH"
 
 cd "$REPO_DIR"
+
+if [ ! -f .env ]; then
+  echo "Error: .env file is missing in $REPO_DIR. Copy .env.example to .env and configure it." >&2
+  exit 1
+fi
+
+chmod 600 .env
+
+CHECK_DOWNLOAD_PATH="${DOWNLOAD_PATH:-}"
+if [ -z "$CHECK_DOWNLOAD_PATH" ]; then
+  CHECK_DOWNLOAD_PATH=$(grep -E '^[[:space:]]*DOWNLOAD_PATH=' .env | tail -n 1 | sed -e 's/^[[:space:]]*DOWNLOAD_PATH=//' -e "s/^['\"]//" -e "s/['\"]$//")
+fi
+
+case "$CHECK_DOWNLOAD_PATH" in
+  /sdcard|/sdcard/*|/storage/*|/storage|"$HOME"/storage|"$HOME"/storage/*|"~"/storage|"~"/storage/*|\$HOME/storage|\$HOME/storage/*)
+    echo "Error: DOWNLOAD_PATH ($CHECK_DOWNLOAD_PATH) cannot be in shared storage (/sdcard, /storage, or $HOME/storage)" >&2
+    exit 1
+    ;;
+esac
+
 exec 2>&1
 exec python storyflow.py
