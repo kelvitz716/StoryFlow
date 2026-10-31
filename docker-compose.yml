@@ -10,18 +10,21 @@ services:
       - proxy_net
     volumes:
       # Map data folders to local directory
-      - ./downloads:/app/downloads
-      - ./cookies:/app/cookies
-      - ./sessions:/app/sessions
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./downloads:/app/downloads:z
+      - ./cookies:/app/cookies:z
+      - ./sessions:/app/sessions:z
+      - ./data:/app/data:z
+      - ./logs:/app/logs:z
     env_file:
       - .env
-    # G3 container hardening
+    mem_limit: ${STORYFLOW_MEM_LIMIT:-2g}
+    cpus: ${STORYFLOW_CPUS:-2.0}
+    # Container hardening (G3 / K2)
     read_only: true
     tmpfs:
-      - /tmp
-      - /run
+      - /tmp:size=256m,mode=1777
+      - /app/.cache:size=256m,uid=1000,gid=1000,mode=0700
+      - /app/.local:size=256m,uid=1000,gid=1000,mode=0700
     security_opt:
       - no-new-privileges:true
     cap_drop:

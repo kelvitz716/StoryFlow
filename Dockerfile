@@ -27,26 +27,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV DOWNLOAD_PATH=/app/downloads
+ENV COOKIE_PATH=/app/cookies
+
 # Copy pre-built packages from builder stage
 COPY --from=builder /install /usr/local
 
-# Copy application code (respects .dockerignore — no dev artifacts)
-COPY . .
-
-# Create storyflow user
-RUN groupadd -r storyflow && useradd -r -g storyflow -u 1000 -m -d /app storyflow
-
-# Create necessary directories and set permissions
-RUN mkdir -p downloads cookies sessions data logs && \
+# Create storyflow user first and prepare data directories
+RUN groupadd -r storyflow && useradd -r -g storyflow -u 1000 -m -d /app storyflow && \
+    mkdir -p downloads cookies sessions data logs && \
     chown -R storyflow:storyflow /app
+
+# Copy application code (respects .dockerignore — no dev artifacts)
+COPY --chown=storyflow:storyflow . .
 
 # Switch to non-root user
 USER storyflow
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DOWNLOAD_PATH=/app/downloads
-ENV COOKIE_PATH=/app/cookies
-
 # Run the update entrypoint script
 ENTRYPOINT ["/bin/bash", "/app/entrypoint.sh"]
+
