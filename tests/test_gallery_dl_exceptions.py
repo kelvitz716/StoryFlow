@@ -333,4 +333,19 @@ async def test_ytdlp_fallback_receives_retry_cookie():
         mock_ytdlp.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_gallery_dl_limit_reached_zero_files():
+    """When gallery-dl hits limit_reached with 0 completed files, return success: False with generic error."""
+    from downloaders.gallery_dl import GalleryDLDownloader
+    import unittest.mock as mock
 
+    dl = GalleryDLDownloader(output_path="./downloads", cookie_path="./cookies")
+    limit_res = {'success': False, 'limit_reached': True, 'error': 'Limit reached'}
+
+    with mock.patch.object(dl, '_execute_with_retry', return_value=limit_res), \
+         mock.patch.object(dl, '_get_download_files', return_value=set()):
+
+        res = await dl.download("https://instagram.com/p/test", "Instagram", user_id="123")
+        assert res['success'] is False
+        assert res.get('limit_reached') is True
+        assert res['error'] == "Download stopped: limit reached before any file completed"

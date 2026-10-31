@@ -242,6 +242,14 @@ class SnapchatDownloader(BaseDownloader):
                         f"⚠️ Reached MAX_FILES_PER_JOB ({_MAX_FILES_PER_JOB}). "
                         f"Stopping download for @{username}."
                     )
+                    if not downloaded_files:
+                        return {
+                            "success": False,
+                            "error": "Download stopped: limit reached before any file completed",
+                            "platform": "Snapchat",
+                            "username": username,
+                            "limit_reached": True,
+                        }
                     return {
                         "success": True,
                         "platform": "Snapchat",
@@ -285,6 +293,14 @@ class SnapchatDownloader(BaseDownloader):
                             f"⚠️ Reached MAX_JOB_SIZE_MB ({_MAX_JOB_SIZE_MB} MB). "
                             f"Stopping download for @{username}."
                         )
+                        if not downloaded_files:
+                            return {
+                                "success": False,
+                                "error": "Download stopped: limit reached before any file completed",
+                                "platform": "Snapchat",
+                                "username": username,
+                                "limit_reached": True,
+                            }
                         return {
                             "success": True,
                             "platform": "Snapchat",

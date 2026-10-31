@@ -74,6 +74,14 @@ class GalleryDLDownloader(BaseDownloader):
             new_files = [f for f in files_after if f not in files_before]
             
             if result.get('limit_reached'):
+                if not new_files:
+                    logging.warning(f"⚠️ {platform} download reached limit before any file completed")
+                    return {
+                        'success': False,
+                        'error': "Download stopped: limit reached before any file completed",
+                        'platform': platform,
+                        'limit_reached': True,
+                    }
                 logging.info(f"🛑 {platform} download reached limit; returning {len(new_files)} completed files")
                 return {
                     'success': True,
@@ -117,6 +125,14 @@ class GalleryDLDownloader(BaseDownloader):
                 new_files = [f for f in files_after if f not in files_before]
 
                 if result.get('limit_reached'):
+                    if not new_files:
+                        logging.warning(f"⚠️ {platform} download reached limit with cookies before any file completed")
+                        return {
+                            'success': False,
+                            'error': "Download stopped: limit reached before any file completed",
+                            'platform': platform,
+                            'limit_reached': True,
+                        }
                     logging.info(f"🛑 {platform} download reached limit with cookies; returning {len(new_files)} completed files")
                     return {
                         'success': True,
@@ -215,6 +231,14 @@ class GalleryDLDownloader(BaseDownloader):
             new_files = [f for f in files_after if f not in files_before]
 
             if result.get('limit_reached'):
+                if not new_files:
+                    logging.warning(f"⚠️ {platform} yt-dlp download reached limit before any file completed")
+                    return {
+                        'success': False,
+                        'error': "Download stopped: limit reached before any file completed",
+                        'platform': platform,
+                        'limit_reached': True,
+                    }
                 logging.info(f"🛑 {platform} yt-dlp download reached limit; returning {len(new_files)} completed files")
                 return {
                     'success': True,

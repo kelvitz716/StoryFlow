@@ -197,3 +197,22 @@ def test_snapchat_stops_at_byte_cap(tmp_path, monkeypatch):
     assert res.get("limit_reached") is True
     assert len(res["files"]) == 2
     assert dl._download_media.call_count == 2
+
+
+def test_snapchat_limit_reached_zero_files(tmp_path, monkeypatch):
+    """When Snapchat hits limit before any file completes, return success: False with generic error."""
+    import downloaders.snapchat as sc_module
+    monkeypatch.setattr(sc_module, "_MAX_FILES_PER_JOB", 0)
+
+    dl = sc_module.SnapchatDownloader(output_path=str(tmp_path))
+    items = [
+        {"mediaUrl": "https://cf-st.sc-cdn.net/1.jpg", "mediaType": 0, "timestamp": "1"},
+    ]
+
+    dl._scrape_page = MagicMock(return_value=items)
+    res = dl._download_stories("testuser", job_id="job123", mode="stories")
+
+    assert res["success"] is False
+    assert res.get("limit_reached") is True
+    assert res["error"] == "Download stopped: limit reached before any file completed"
+
