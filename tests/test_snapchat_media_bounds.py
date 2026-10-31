@@ -129,3 +129,71 @@ def test_disk_critical_file_skipped(tmp_path):
         assert res is None
         assert dl.session.get.call_count == 0
         assert len(list(tmp_path.iterdir())) == 0
+
+
+# ---------------------------------------------------------------------------
+# G4: Snapchat stops at item cap and at byte cap
+# ---------------------------------------------------------------------------
+
+def test_snapchat_stops_at_item_cap(tmp_path, monkeypatch):
+    """Snapchat download loop stops once MAX_FILES_PER_JOB items are downloaded."""
+    import downloaders.snapchat as sc_module
+    monkeypatch.setattr(sc_module, "_MAX_FILES_PER_JOB", 2)
+    monkeypatch.setattr(sc_module, "_MAX_JOB_SIZE_MB", 100)
+
+    dl = sc_module.SnapchatDownloader(output_path=str(tmp_path))
+    items = [
+        {"mediaUrl": "https://cf-st.sc-cdn.net/1.jpg", "mediaType": 0, "timestamp": "1"},
+        {"mediaUrl": "https://cf-st.sc-cdn.net/2.jpg", "mediaType": 0, "timestamp": "2"},
+        {"mediaUrl": "https://cf-st.sc-cdn.net/3.jpg", "mediaType": 0, "timestamp": "3"},
+        {"mediaUrl": "https://cf-st.sc-cdn.net/4.jpg", "mediaType": 0, "timestamp": "4"},
+    ]
+
+    dl._scrape_page = MagicMock(return_value=items)
+    # Mock _download_media to return dummy file path and write a small file
+    def _fake_download(media_url, username, index, media_type, timestamp, output_path):
+        fpath = os.path.join(output_path, f"snap_{index}.jpg")
+        with open(fpath, "wb") as f:
+            f.write(b"img")
+        return fpath
+
+    dl._download_media = MagicMock(side_effect=_fake_download)
+
+    res = dl._download_stories("testuser", job_id="job123", mode="stories")
+
+    assert res["success"] is True
+    assert res.get("limit_reached") is True
+    assert len(res["files"]) == 2
+    assert dl._download_media.call_count == 2
+
+
+def test_snapchat_stops_at_byte_cap(tmp_path, monkeypatch):
+    """Snapchat download loop stops once cumulative downloaded bytes reach MAX_JOB_SIZE_MB."""
+    import downloaders.snapchat as sc_module
+    # Set limit to 1 MB
+    monkeypatch.setattr(sc_module, "_MAX_JOB_SIZE_MB", 1)
+    monkeypatch.setattr(sc_module, "_MAX_FILES_PER_JOB", 100)
+
+    dl = sc_module.SnapchatDownloader(output_path=str(tmp_path))
+    items = [
+        {"mediaUrl": "https://cf-st.sc-cdn.net/1.mp4", "mediaType": 1, "timestamp": "1"},
+        {"mediaUrl": "https://cf-st.sc-cdn.net/2.mp4", "mediaType": 1, "timestamp": "2"},
+        {"mediaUrl": "https://cf-st.sc-cdn.net/3.mp4", "mediaType": 1, "timestamp": "3"},
+    ]
+
+    dl._scrape_page = MagicMock(return_value=items)
+    # Each download writes 600 KB -> first is 600 KB, second is 1.2 MB (exceeds 1 MB)
+    def _fake_download(media_url, username, index, media_type, timestamp, output_path):
+        fpath = os.path.join(output_path, f"snap_{index}.mp4")
+        with open(fpath, "wb") as f:
+            f.write(b"M" * 600 * 1024)
+        return fpath
+
+    dl._download_media = MagicMock(side_effect=_fake_download)
+
+    res = dl._download_stories("testuser", job_id="job123", mode="stories")
+
+    assert res["success"] is True
+    assert res.get("limit_reached") is True
+    assert len(res["files"]) == 2
+    assert dl._download_media.call_count == 2

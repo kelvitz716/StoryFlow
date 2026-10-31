@@ -172,3 +172,84 @@ class TestStdoutFloodBoundedMemory:
         rss_growth_mb = rss_after - rss_before
         assert rss_growth_mb < 50.0, f"RSS grew by {rss_growth_mb:.2f} MB, exceeding 50 MB limit"
 
+
+# ---------------------------------------------------------------------------
+# Test (d): G4 size and file watchdog limits
+# ---------------------------------------------------------------------------
+
+class TestWatchdogLimits:
+    """G4 tests: watchdog kills process when job size or file count exceeds cap."""
+
+    @pytest.mark.asyncio
+    async def test_watchdog_kills_process_exceeding_size_cap_and_cleans_partial(self, tmp_path, monkeypatch):
+        """A process that writes more than MAX_JOB_SIZE_MB is killed and partial files cleaned."""
+        import downloaders.base as base_module
+        # Set cap to 1 MB (1048576 bytes)
+        monkeypatch.setattr(base_module, "_MAX_JOB_SIZE_MB", 1)
+
+        job_dir = tmp_path / "job_size_test"
+        job_dir.mkdir()
+
+        # Script creates a completed file then continually writes to a .part file
+        script = textwrap.dedent(f"""
+            import sys, time, os
+            d = {repr(str(job_dir))}
+            with open(os.path.join(d, "good.mp4"), "wb") as f:
+                f.write(b"good" * 1024)
+            part_path = os.path.join(d, "large.part")
+            with open(part_path, "wb") as f:
+                while True:
+                    f.write(b"X" * 65536)
+                    f.flush()
+                    time.sleep(0.05)
+        """)
+        cmd = [sys.executable, "-c", script]
+
+        dl = ConcreteDownloader(output_path=str(tmp_path))
+        result = await dl._execute_with_retry(
+            cmd,
+            process_name="test_watchdog_size",
+            max_attempts=1,
+            job_dir=str(job_dir),
+            check_interval=0.1,  # Fast check for test
+        )
+
+        assert result['success'] is False
+        assert result.get('limit_reached') is True
+        assert "limit" in result.get('error', '').lower()
+
+        # Verify partial file was removed and good completed file remained
+        remaining_files = os.listdir(str(job_dir))
+        assert "good.mp4" in remaining_files
+        assert not any(f.endswith('.part') for f in remaining_files)
+
+    @pytest.mark.asyncio
+    async def test_watchdog_below_cap_unchanged(self, tmp_path, monkeypatch):
+        """A process that stays below the size cap finishes normally with success."""
+        import downloaders.base as base_module
+        monkeypatch.setattr(base_module, "_MAX_JOB_SIZE_MB", 100)
+
+        job_dir = tmp_path / "job_below_cap"
+        job_dir.mkdir()
+
+        script = textwrap.dedent(f"""
+            import sys, os
+            d = {repr(str(job_dir))}
+            with open(os.path.join(d, "file.mp4"), "wb") as f:
+                f.write(b"data" * 1024)
+            print("done")
+        """)
+        cmd = [sys.executable, "-c", script]
+
+        dl = ConcreteDownloader(output_path=str(tmp_path))
+        result = await dl._execute_with_retry(
+            cmd,
+            process_name="test_watchdog_normal",
+            max_attempts=1,
+            job_dir=str(job_dir),
+            check_interval=0.1,
+        )
+
+        assert result['success'] is True
+        assert os.path.exists(os.path.join(str(job_dir), "file.mp4"))
+

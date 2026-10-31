@@ -10,6 +10,9 @@ from core.queue import _env_int
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
 
+# Maximum files downloaded per job (G4)
+_MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
+
 # Admin cookie fallback is opt-in (item 8).
 # Default is disabled to prevent inadvertently sharing admin credentials.
 _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false').lower() == 'true'
@@ -64,12 +67,22 @@ class GalleryDLDownloader(BaseDownloader):
             logging.debug(f"Command: {' '.join(command)}")
             
             # Execute gallery-dl with retry logic (Async)
-            result = await self._execute_with_retry(command, progress_callback=progress_callback)
+            result = await self._execute_with_retry(command, progress_callback=progress_callback, job_dir=job_output_path)
             
             # Find new files after gallery-dl attempt
             files_after = self._get_download_files(job_output_path)
             new_files = [f for f in files_after if f not in files_before]
             
+            if result.get('limit_reached'):
+                logging.info(f"🛑 {platform} download reached limit; returning {len(new_files)} completed files")
+                return {
+                    'success': True,
+                    'files': new_files,
+                    'platform': platform,
+                    'message': "Download stopped: limit reached",
+                    'limit_reached': True,
+                }
+
             if result['success']:
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded successfully! ({len(new_files)} files)")
@@ -98,10 +111,20 @@ class GalleryDLDownloader(BaseDownloader):
                 tried_cookie = retry_cookie
                 logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(retry_cookie)}...")
                 command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True)
-                result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback)
+                result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback, job_dir=job_output_path)
 
                 files_after = self._get_download_files(job_output_path)
                 new_files = [f for f in files_after if f not in files_before]
+
+                if result.get('limit_reached'):
+                    logging.info(f"🛑 {platform} download reached limit with cookies; returning {len(new_files)} completed files")
+                    return {
+                        'success': True,
+                        'files': new_files,
+                        'platform': platform,
+                        'message': "Download stopped: limit reached",
+                        'limit_reached': True,
+                    }
 
                 if result['success']:
                     if new_files:
@@ -186,16 +209,22 @@ class GalleryDLDownloader(BaseDownloader):
             logging.info(f"📥 Downloading {platform} content via yt-dlp...")
             
             # Re-use _execute_with_retry since it now supports streaming and progress
-            result = await self._execute_with_retry(command, progress_callback=progress_callback)
+            result = await self._execute_with_retry(command, progress_callback=progress_callback, job_dir=output_path)
             
+            files_after = self._get_download_files(output_path)
+            new_files = [f for f in files_after if f not in files_before]
+
+            if result.get('limit_reached'):
+                logging.info(f"🛑 {platform} yt-dlp download reached limit; returning {len(new_files)} completed files")
+                return {
+                    'success': True,
+                    'files': new_files,
+                    'platform': platform,
+                    'message': "Download stopped: limit reached",
+                    'limit_reached': True,
+                }
+
             if result['success']:
-                # Find new files
-                files_after = self._get_download_files(output_path)
-                
-                # Use files_before as baseline to capture all files new since request start, 
-                # regardless of which downloader produced them.
-                new_files = [f for f in files_after if f not in files_before]
-                
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded via yt-dlp! ({len(new_files)} files)")
                     return {
@@ -243,6 +272,7 @@ class GalleryDLDownloader(BaseDownloader):
             '-d', output_path,
             '--no-mtime',  # Don't set file modification time
             f'--filesize-max={_MAX_FILE_SIZE_MB}m',
+            f'--range=1-{_MAX_FILES_PER_JOB}',
         ]
         
         # Add cookie support

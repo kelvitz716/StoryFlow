@@ -30,6 +30,8 @@ from downloaders.base import BaseDownloader
 _ALLOWED_MEDIA_HOST_SUFFIXES = ("sc-cdn.net", "snapchat.com")
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
 _DOWNLOAD_TIMEOUT_SECONDS = _env_int('DOWNLOAD_TIMEOUT_SECONDS', 600, 10, 86400)
+_MAX_JOB_SIZE_MB = _env_int('MAX_JOB_SIZE_MB', 2048, 10, 100000)
+_MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
 
 # ---------------------------------------------------------------------------
 # Snapchat web endpoint — no auth required for public profiles
@@ -231,7 +233,26 @@ class SnapchatDownloader(BaseDownloader):
             logging.info(f"📸 Found {count} snap(s) for @{username}")
 
             downloaded_files: List[str] = []
+            cumulative_bytes = 0
+            max_job_bytes = _MAX_JOB_SIZE_MB * 1024 * 1024
+
             for i, item in enumerate(all_items, 1):
+                if len(downloaded_files) >= _MAX_FILES_PER_JOB:
+                    logging.warning(
+                        f"⚠️ Reached MAX_FILES_PER_JOB ({_MAX_FILES_PER_JOB}). "
+                        f"Stopping download for @{username}."
+                    )
+                    return {
+                        "success": True,
+                        "platform": "Snapchat",
+                        "username": username,
+                        "total_stories": count,
+                        "downloaded": len(downloaded_files),
+                        "files": downloaded_files,
+                        "message": "Download stopped: limit reached",
+                        "limit_reached": True,
+                    }
+
                 media_url  = item.get("mediaUrl")
                 media_type = item.get("mediaType", 0)   # 0=image, 1=video
                 timestamp  = item.get("timestamp", "")
@@ -251,9 +272,29 @@ class SnapchatDownloader(BaseDownloader):
 
                 if filename:
                     downloaded_files.append(filename)
+                    try:
+                        cumulative_bytes += os.path.getsize(filename)
+                    except OSError:
+                        pass
                     logging.info(
                         f"✅ Downloaded {i}/{count}: {os.path.basename(filename)}"
                     )
+
+                    if cumulative_bytes >= max_job_bytes:
+                        logging.warning(
+                            f"⚠️ Reached MAX_JOB_SIZE_MB ({_MAX_JOB_SIZE_MB} MB). "
+                            f"Stopping download for @{username}."
+                        )
+                        return {
+                            "success": True,
+                            "platform": "Snapchat",
+                            "username": username,
+                            "total_stories": count,
+                            "downloaded": len(downloaded_files),
+                            "files": downloaded_files,
+                            "message": "Download stopped: limit reached",
+                            "limit_reached": True,
+                        }
 
                     is_critical, usage = is_storage_critical(
                         job_output_path, threshold=90.0
