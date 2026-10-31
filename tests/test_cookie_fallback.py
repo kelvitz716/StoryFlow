@@ -204,3 +204,190 @@ def test_delete_user_cookies():
         assert not os.path.exists(ig_123)
         assert not os.path.exists(tt_123)
 
+
+class TestCookieOwnerMap:
+    """Tests for C1: COOKIE_OWNER_MAP explicit mapping."""
+
+    def test_mapped_identity_gets_owner_file(self):
+        """A mapped identity gets the owner's cookie file."""
+        import importlib
+        import downloaders.gallery_dl as _m
+
+        with tempfile.TemporaryDirectory() as cookie_dir:
+            owner_id = "123456789"
+            channel_id = "-1001234567890"
+            platform = "instagram"
+            owner_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(owner_id)}.txt")
+            with open(owner_file, 'w') as f:
+                f.write("# Netscape HTTP Cookie File\n")
+
+            with patch.dict(os.environ, {'COOKIE_OWNER_MAP': f"{channel_id}:{owner_id}"}):
+                importlib.reload(_m)
+                dl = _m.GalleryDLDownloader(
+                    output_path=tempfile.mkdtemp(),
+                    cookie_path=cookie_dir,
+                    admin_id="9999"
+                )
+                result = dl._get_cookie_file(platform, channel_id)
+
+            assert result == owner_file
+
+    def test_unmapped_identity_gets_none(self):
+        """An unmapped identity gets None and does not use another user's cookie."""
+        import importlib
+        import downloaders.gallery_dl as _m
+
+        with tempfile.TemporaryDirectory() as cookie_dir:
+            owner_id = "123456789"
+            unmapped_id = "-1009999999999"
+            platform = "instagram"
+            owner_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(owner_id)}.txt")
+            with open(owner_file, 'w') as f:
+                f.write("# Netscape HTTP Cookie File\n")
+
+            with patch.dict(os.environ, {'COOKIE_OWNER_MAP': f"-1001111111111:{owner_id}"}):
+                importlib.reload(_m)
+                dl = _m.GalleryDLDownloader(
+                    output_path=tempfile.mkdtemp(),
+                    cookie_path=cookie_dir,
+                    admin_id="9999"
+                )
+                result = dl._get_cookie_file(platform, unmapped_id)
+
+            assert result is None
+
+    def test_malformed_map_entry_ignored(self, caplog):
+        """A malformed map entry is ignored with a warning that does not echo the values."""
+        import importlib
+        import logging
+        import downloaders.gallery_dl as _m
+
+        with tempfile.TemporaryDirectory() as cookie_dir:
+            owner_id = "123456"
+            channel_id = "-100123"
+            platform = "instagram"
+            owner_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(owner_id)}.txt")
+            with open(owner_file, 'w') as f:
+                f.write("# Netscape HTTP Cookie File\n")
+
+            malformed_value = f"{channel_id}:{owner_id},bad_entry,invalid:xyz,123:"
+            with caplog.at_level(logging.WARNING), \
+                 patch.dict(os.environ, {'COOKIE_OWNER_MAP': malformed_value}):
+                importlib.reload(_m)
+                dl = _m.GalleryDLDownloader(
+                    output_path=tempfile.mkdtemp(),
+                    cookie_path=cookie_dir,
+                    admin_id="9999"
+                )
+                result = dl._get_cookie_file(platform, channel_id)
+
+            # Valid mapping still worked
+            assert result == owner_file
+            # Warning was logged
+            warning_records = [r for r in caplog.records if r.levelno == logging.WARNING and "COOKIE_OWNER_MAP" in r.message]
+            assert len(warning_records) == 1
+            # Warning does not echo values
+            msg = warning_records[0].message
+            assert "bad_entry" not in msg
+            assert "xyz" not in msg
+            assert malformed_value not in msg
+
+    def test_missing_owner_file_returns_none_with_no_other_fallback(self):
+        """A missing owner file returns None with no fallthrough to admin fallback or legacy."""
+        import importlib
+        import downloaders.gallery_dl as _m
+
+        with tempfile.TemporaryDirectory() as cookie_dir:
+            owner_id = "123456"
+            channel_id = "-100123"
+            admin_id = "9999"
+            platform = "instagram"
+
+            # Create admin and legacy cookies
+            admin_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(admin_id)}.txt")
+            legacy_file = os.path.join(cookie_dir, f"{platform}.txt")
+            with open(admin_file, 'w') as f:
+                f.write("admin cookie")
+            with open(legacy_file, 'w') as f:
+                f.write("legacy cookie")
+
+            with patch.dict(os.environ, {
+                'COOKIE_OWNER_MAP': f"{channel_id}:{owner_id}",
+                'ALLOW_ADMIN_COOKIE_FALLBACK': 'true'
+            }):
+                importlib.reload(_m)
+                dl = _m.GalleryDLDownloader(
+                    output_path=tempfile.mkdtemp(),
+                    cookie_path=cookie_dir,
+                    admin_id=admin_id
+                )
+                # Owner file does not exist!
+                result = dl._get_cookie_file(platform, channel_id)
+
+            assert result is None
+
+    def test_user_own_file_wins_over_map(self):
+        """The user's own file wins over the mapped owner's file."""
+        import importlib
+        import downloaders.gallery_dl as _m
+
+        with tempfile.TemporaryDirectory() as cookie_dir:
+            owner_id = "123456"
+            channel_id = "-100123"
+            platform = "instagram"
+
+            user_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(channel_id)}.txt")
+            owner_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(owner_id)}.txt")
+            with open(user_file, 'w') as f:
+                f.write("user's own cookie")
+            with open(owner_file, 'w') as f:
+                f.write("owner's cookie")
+
+            with patch.dict(os.environ, {'COOKIE_OWNER_MAP': f"{channel_id}:{owner_id}"}):
+                importlib.reload(_m)
+                dl = _m.GalleryDLDownloader(
+                    output_path=tempfile.mkdtemp(),
+                    cookie_path=cookie_dir,
+                    admin_id="9999"
+                )
+                result = dl._get_cookie_file(platform, channel_id)
+
+            assert result == user_file
+
+    def test_logging_source_and_negative_id_hint(self, caplog):
+        """Test logging of cookie sources with masked identities and hint for negative ID."""
+        import importlib
+        import logging
+        import downloaders.gallery_dl as _m
+
+        with tempfile.TemporaryDirectory() as cookie_dir:
+            owner_id = "123456789"
+            channel_id = "-1001234567890"
+            platform = "instagram"
+
+            owner_file = os.path.join(cookie_dir, f"{platform}_{_sanitize(owner_id)}.txt")
+            with open(owner_file, 'w') as f:
+                f.write("owner cookie")
+
+            with caplog.at_level(logging.INFO), \
+                 patch.dict(os.environ, {'COOKIE_OWNER_MAP': f"{channel_id}:{owner_id}"}):
+                importlib.reload(_m)
+                dl = _m.GalleryDLDownloader(output_path=tempfile.mkdtemp(), cookie_path=cookie_dir)
+
+                # 1. Mapped owner cookie found
+                res = dl._get_cookie_file(platform, channel_id)
+                assert res == owner_file
+                mapped_records = [r for r in caplog.records if "mapped owner" in r.message]
+                assert len(mapped_records) >= 1
+                # Check identity is masked
+                assert channel_id not in mapped_records[0].message
+                assert "-10***890" in mapped_records[0].message or "***" in mapped_records[0].message
+
+                # 2. Negative ID with no cookie logs hint
+                caplog.clear()
+                res_none = dl._get_cookie_file(platform, "-100999888777")
+                assert res_none is None
+                hint_records = [r for r in caplog.records if "COOKIE_OWNER_MAP" in r.message]
+                assert len(hint_records) >= 1
+
+

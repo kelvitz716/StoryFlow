@@ -18,6 +18,38 @@ _MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
 _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false').lower() == 'true'
 
 
+def _parse_cookie_owner_map(raw: Optional[str]) -> Dict[str, str]:
+    """Parse COOKIE_OWNER_MAP env var into identity -> owner mapping."""
+    if not raw or not raw.strip():
+        return {}
+    owner_map: Dict[str, str] = {}
+    has_malformed = False
+    for item in raw.split(','):
+        entry = item.strip()
+        if not entry:
+            continue
+        parts = entry.split(':')
+        if len(parts) == 2 and re.match(r'^-?\d+$', parts[0]) and re.match(r'^-?\d+$', parts[1]):
+            owner_map[parts[0]] = parts[1]
+        else:
+            has_malformed = True
+    if has_malformed:
+        logging.warning("⚠️ Malformed entry detected in COOKIE_OWNER_MAP; ignored")
+    return owner_map
+
+
+# Explicit cookie-owner mapping for channel/anonymous identities (C1)
+_COOKIE_OWNER_MAP = _parse_cookie_owner_map(os.getenv('COOKIE_OWNER_MAP'))
+
+
+def _mask_id(uid: Optional[str]) -> str:
+    """Mask identity for privacy in logs."""
+    if not uid:
+        return "***"
+    s = str(uid)
+    return f"{s[:3]}***{s[-3:]}" if len(s) > 6 else "***"
+
+
 from downloaders.base import BaseDownloader
 
 class GalleryDLDownloader(BaseDownloader):
@@ -319,6 +351,7 @@ class GalleryDLDownloader(BaseDownloader):
         """
         Get the best available cookie file:
         1. Specific user cookies
+        1.5 Mapped owner cookies (for channel/anonymous identities via COOKIE_OWNER_MAP)
         2. Admin fallback cookies (only when ALLOW_ADMIN_COOKIE_FALLBACK=true)
         3. Legacy default cookies
 
@@ -336,19 +369,37 @@ class GalleryDLDownloader(BaseDownloader):
             s_uid = _sanitize_id(user_id)
             user_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_uid}.txt")
             if os.path.exists(user_cookie):
+                logging.info(f"🍪 Cookie source: user (identity: {_mask_id(user_id)}) for {platform}")
                 return user_cookie
+
+        # 1.5 Mapped Owner Cookies (C1)
+        if user_id and str(user_id) in _COOKIE_OWNER_MAP:
+            mapped_owner = _COOKIE_OWNER_MAP[str(user_id)]
+            s_owner = _sanitize_id(mapped_owner)
+            mapped_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_owner}.txt")
+            if os.path.exists(mapped_cookie):
+                logging.info(f"🍪 Cookie source: mapped owner (identity: {_mask_id(user_id)}) for {platform}")
+                return mapped_cookie
+            # If mapped owner file does not exist, return None without falling through
+            if str(user_id).startswith('-'):
+                logging.info(f"💡 Hint: Negative ID {_mask_id(user_id)} found no cookie file. Check mapped owner cookies or COOKIE_OWNER_MAP.")
+            return None
 
         # 2. Admin Fallback — only when explicitly opted in
         if _ALLOW_ADMIN_COOKIE_FALLBACK and self.admin_id and self.admin_id != user_id:
             s_admin = _sanitize_id(self.admin_id)
             admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
             if os.path.exists(admin_cookie):
-                logging.info(f"💡 using Admin cookies for {platform} (Fallback)")
+                logging.info(f"🍪 Cookie source: admin fallback (identity: {_mask_id(user_id)}) for {platform}")
                 return admin_cookie
 
         # 3. Legacy Default
         default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
         if os.path.exists(default_cookie):
+            logging.info(f"🍪 Cookie source: legacy (identity: {_mask_id(user_id)}) for {platform}")
             return default_cookie
+
+        if user_id and str(user_id).startswith('-'):
+            logging.info(f"💡 Hint: Negative ID {_mask_id(user_id)} found no cookie file. Configure COOKIE_OWNER_MAP in .env to map channel/anonymous identities to an owner.")
 
         return None
