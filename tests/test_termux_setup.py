@@ -66,3 +66,19 @@ def test_tgcrypto_filtering_output():
         if os.path.exists(tmp_name):
             os.remove(tmp_name)
 
+
+def test_termux_readme_host_hardening():
+    """Verify termux/README.md contains the Host Hardening section heading and a reference to harden-ssh.sh."""
+    readme_path = os.path.join(os.path.dirname(__file__), "..", "termux", "README.md")
+    with open(readme_path, "r") as f:
+        content = f.read()
+
+    assert "## Host Hardening" in content
+    assert "harden-ssh.sh" in content
+    assert "ssh-keygen -t ed25519" in content
+    assert "ssh-copy-id" in content
+    assert "DOWNLOAD_PATH" in content
+    assert "termux-setup-storage" in content
+    assert "phone lost" in content.lower() or "lost" in content.lower()
+
+
