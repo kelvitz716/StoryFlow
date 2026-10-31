@@ -19,28 +19,9 @@ _MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
 _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false').lower() == 'true'
 
 
-def _parse_cookie_owner_map(raw: Optional[str]) -> Dict[str, str]:
-    """Parse COOKIE_OWNER_MAP env var into identity -> owner mapping."""
-    if not raw or not raw.strip():
-        return {}
-    owner_map: Dict[str, str] = {}
-    has_malformed = False
-    for item in raw.split(','):
-        entry = item.strip()
-        if not entry:
-            continue
-        parts = entry.split(':')
-        if len(parts) == 2 and re.match(r'^-?\d+$', parts[0]) and re.match(r'^-?\d+$', parts[1]):
-            owner_map[parts[0]] = parts[1]
-        else:
-            has_malformed = True
-    if has_malformed:
-        logging.warning("⚠️ Malformed entry detected in COOKIE_OWNER_MAP; ignored")
-    return owner_map
-
-
-# Explicit cookie-owner mapping for channel/anonymous identities (C1)
-_COOKIE_OWNER_MAP = _parse_cookie_owner_map(os.getenv('COOKIE_OWNER_MAP'))
+from core import cookie_map as _cookie_map
+_cookie_map.reload()
+_COOKIE_OWNER_MAP = _cookie_map.all_mappings()
 
 
 def _mask_id(uid: Optional[str]) -> str:
@@ -449,8 +430,8 @@ class GalleryDLDownloader(BaseDownloader):
                 return user_cookie
 
         # 1.5 Mapped Owner Cookies (C1)
-        if user_id and str(user_id) in _COOKIE_OWNER_MAP:
-            mapped_owner = _COOKIE_OWNER_MAP[str(user_id)]
+        mapped_owner = _cookie_map.get(str(user_id)) if user_id else None
+        if mapped_owner:
             s_owner = _sanitize_id(mapped_owner)
             mapped_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_owner}.txt")
             if os.path.exists(mapped_cookie):
@@ -462,7 +443,7 @@ class GalleryDLDownloader(BaseDownloader):
             return None
 
         # 2. Admin Fallback — only when explicitly opted in
-        if _ALLOW_ADMIN_COOKIE_FALLBACK:
+        if _ALLOW_ADMIN_COOKIE_FALLBACK or _cookie_map.is_admin_fallback_enabled():
             admin_list = self.admin_ids if self.admin_ids else ([self.admin_id] if self.admin_id else [])
             for aid in admin_list:
                 if str(aid) != str(user_id):

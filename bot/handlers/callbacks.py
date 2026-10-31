@@ -16,6 +16,7 @@ from bot.menus import (
     send_main_menu,
     send_help_menu,
     send_admin_menu,
+    send_channel_cookies_menu,
     send_cookies_menu,
     send_delete_cookies_menu,
     send_quality_menu,
@@ -93,6 +94,47 @@ async def button_callback(
             parse_mode='Markdown',
             reply_markup=get_back_button("menu_admin")
         )
+    elif data == "admin_channel_cookies":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
+        await send_channel_cookies_menu(query, user_id, access_manager, is_new_message=False)
+    elif data == "admin_toggle_cookie_fallback":
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
+        from core import cookie_map
+        new_state = not cookie_map.is_admin_fallback_enabled()
+        cookie_map.set_admin_fallback(new_state)
+        await query.answer(f"Admin fallback: {'Enabled' if new_state else 'Disabled'}")
+        await send_channel_cookies_menu(query, user_id, access_manager, is_new_message=False)
+    elif data.startswith("admin_unlink_channel_"):
+        if not access_manager.is_admin(user_id):
+            await query.edit_message_text("⛔ Admin only.", reply_markup=get_back_button())
+            return
+        ch = data.replace("admin_unlink_channel_", "")
+        from core import cookie_map
+        cookie_map.remove(ch)
+        await query.answer(f"Unlinked channel {ch}")
+        await send_channel_cookies_menu(query, user_id, access_manager, is_new_message=False)
+    elif data.startswith("map_channel_"):
+        channel_id = data.replace("map_channel_", "")
+        if access_manager.is_admin(user_id) or access_manager.is_user_allowed(user_id):
+            from core import cookie_map
+            cookie_map.add(channel_id, user_id)
+            await query.answer("✅ Channel linked to your cookies!", show_alert=True)
+            try:
+                await query.edit_message_text(
+                    f"✅ *Channel Linked!*\n\n"
+                    f"This channel (`{channel_id}`) is now linked to your cookies.\n"
+                    f"Future downloads from this channel will use your cookies.\n\n"
+                    f"Try sending your link again now!",
+                    parse_mode='Markdown'
+                )
+            except Exception:
+                pass
+        else:
+            await query.answer("❌ Only authorized users can link cookies.", show_alert=True)
 
     # Purge flow — admin only, requires confirmation
     elif data == "menu_purge_confirm":

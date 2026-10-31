@@ -5,6 +5,7 @@ from .commands import (
     start,
     help_command,
     queue_command,
+    mapchannel_command,
 )
 
 # Admin & auth

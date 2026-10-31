@@ -84,3 +84,53 @@ COOKIE_OWNER_MAP=-1001234567890:123456789,-1009876543210:123456789
 - **Priority**: A user's own cookie file always takes priority if present.
 - **Isolation**: Unmapped channel identities never fall through to other users' cookies.
 
+### In-Bot Management (No `.env` editing needed!)
+You can also map channels or toggle fallback directly in Telegram:
+- **1-Tap Button**: When a download in a channel fails with "Authentication required", the bot replies with an interactive `[🍪 Link My Cookies to This Channel]` button. Tap it once to link your cookies to the channel.
+- **Command `/mapchannel`**: Send `/mapchannel` directly inside any channel or group to link it to your account.
+- **Admin Menu**: Go to `/admin` ➔ **Channel Cookies** to toggle Global Admin Fallback or view/unlink mapped channels.
+
+## Admin Cookie Fallback (`ALLOW_ADMIN_COOKIE_FALLBACK`)
+
+By default StoryFlow never uses the admin's cookie files as a fallback for other users. Set this only when you intentionally want the admin's saved cookies to act as a fallback for users who have no cookies of their own:
+
+```env
+ALLOW_ADMIN_COOKIE_FALLBACK=true
+```
+
+> [!CAUTION]
+> Enabling this shares the admin's authenticated session with any user who triggers a download. Leave it `false` (the default) in multi-user deployments.
+
+## Download Limits
+
+These env vars cap how much each download job can consume. All are optional — the defaults are generous enough for typical use:
+
+| Variable | Default | Range | Description |
+|---|---|---|---|
+| `MAX_FILE_SIZE_MB` | `500` | 1 – 10 000 | Maximum size of a single file accepted from gallery-dl / yt-dlp (MB). |
+| `MAX_JOB_SIZE_MB` | `2048` | 10 – 100 000 | Cumulative download size allowed per job before the subprocess is killed (MB). |
+| `MAX_FILES_PER_JOB` | `500` | 1 – 10 000 | Maximum number of files downloaded in a single job. |
+| `DOWNLOAD_TIMEOUT_SECONDS` | `600` | 10 – 86 400 | Wall-clock timeout for a single download subprocess (seconds). |
+
+Example `.env` snippet:
+```env
+MAX_FILE_SIZE_MB=500
+MAX_JOB_SIZE_MB=2048
+MAX_FILES_PER_JOB=500
+DOWNLOAD_TIMEOUT_SECONDS=600
+```
+
+## Per-User Download Quality
+
+Users can set their preferred video quality via the bot's **Settings → Quality** menu (or the inline keyboard shown after sending a URL). The available options are:
+
+| Key | Description |
+|---|---|
+| `best` | Best available video + audio (default) |
+| `1080p` | Up to 1080p |
+| `720p` | Up to 720p |
+| `480p` | Up to 480p |
+| `audio` | Audio-only (MP3 extraction via yt-dlp) |
+
+Preferences are stored per-user in the local SQLite database and apply to all yt-dlp-backed downloads. There is no global env var for quality — each user picks their own via the in-bot menu.
+

@@ -137,9 +137,53 @@ async def send_admin_menu(target, user_id: str, access_manager: AccessManager, i
          InlineKeyboardButton("⚠️ System Purge", callback_data="menu_purge_confirm")],
         [InlineKeyboardButton("➕ Add User", callback_data="admin_add"),
          InlineKeyboardButton("➖ Remove User", callback_data="admin_remove")],
+        [InlineKeyboardButton("🍪 Channel Cookies", callback_data="admin_channel_cookies")],
         [InlineKeyboardButton("⬅️ Main Menu", callback_data="menu_main")],
     ])
     
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+async def send_channel_cookies_menu(target, user_id: str, access_manager: AccessManager, is_new_message: bool = False):
+    """Send the channel cookie mapping and admin fallback management menu."""
+    if not access_manager.is_admin(user_id):
+        return
+
+    from core import cookie_map
+    mappings = cookie_map.all_mappings()
+    is_fallback = cookie_map.is_admin_fallback_enabled()
+
+    fallback_status = "✅ Enabled" if is_fallback else "❌ Disabled"
+    fallback_btn_text = "⚡ Disable Fallback" if is_fallback else "⚡ Enable Fallback"
+
+    text = (
+        "🍪 *Channel Cookie Management*\n\n"
+        f"⚡ *Global Admin Fallback:* {fallback_status}\n"
+        "_(When enabled, all channels and anonymous jobs automatically use the admin's cookies)_\n\n"
+    )
+    if mappings:
+        text += f"*Mapped Channels ({len(mappings)}):*\n"
+        for ch, own in mappings.items():
+            text += f"• `{ch}` ➔ User `{own}`\n"
+    else:
+        text += "No specific channel mappings saved yet.\n"
+
+    text += (
+        "\n💡 *Quick tip:* When a download fails in a channel, tap the "
+        "`[🍪 Link My Cookies]` button on the error message, or send `/mapchannel` in the channel!"
+    )
+
+    buttons = [
+        [InlineKeyboardButton(fallback_btn_text, callback_data="admin_toggle_cookie_fallback")]
+    ]
+    for ch in list(mappings.keys())[:5]:
+        buttons.append([InlineKeyboardButton(f"🗑️ Unlink {ch}", callback_data=f"admin_unlink_channel_{ch}")])
+
+    buttons.append([InlineKeyboardButton("⬅️ Back to Admin", callback_data="menu_admin")])
+    keyboard = InlineKeyboardMarkup(buttons)
+
     if is_new_message:
         await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
     else:

@@ -119,10 +119,17 @@ async def update_job_status(application: Application, job: DownloadJob):
                 
         elif job.status == JobStatus.FAILED:
             error_text = format_error_message(job.error or "Unknown failure", job.platform)
+            keyboard = None
+            if str(job.user_id).startswith('-') and ("auth" in (job.error or "").lower() or "login" in (job.error or "").lower()):
+                from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🍪 Link My Cookies to This Channel", callback_data=f"map_channel_{job.user_id}")]
+                ])
             request_edit(
                 status_msg,
                 error_text,
                 parse_mode='Markdown',
+                reply_markup=keyboard,
                 terminal=True
             )
             pop_job_message(job.job_id)
@@ -236,7 +243,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     
     # Handler wrapper functions (async def wrappers preserve inspect.iscoroutinefunction
     # and access dynamic variables like download_queue and mtproto_client at runtime)
-    from bot.handlers import queue_command, handle_admin_input
+    from bot.handlers import queue_command, handle_admin_input, mapchannel_command
 
     async def _start_wrapper(u, c):
         await start(u, c, access_manager)
@@ -246,6 +253,9 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
 
     async def _queue_wrapper(u, c):
         await queue_command(u, c, access_manager, download_queue)
+
+    async def _mapchannel_wrapper(u, c):
+        await mapchannel_command(u, c, access_manager)
 
     async def _admin_input_wrapper(u, c):
         await handle_admin_input(u, c, access_manager)
@@ -259,6 +269,7 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     app.add_handler(CommandHandler("start", _start_wrapper))
     app.add_handler(CommandHandler("help", _help_wrapper))
     app.add_handler(CommandHandler("queue", _queue_wrapper))
+    app.add_handler(CommandHandler("mapchannel", _mapchannel_wrapper))
     
     # Callback Query
     app.add_handler(CallbackQueryHandler(button_callback))
