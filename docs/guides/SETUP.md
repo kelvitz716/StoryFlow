@@ -55,6 +55,7 @@ If you prefer to run directly on your host:
     - `TELEGRAM_BOT_TOKEN`: From @BotFather.
     - `ADMIN_USER_ID`: Your Telegram ID (to authorize commands).
     - `MODE=telegram`: To run the bot.
+    - `EXTRACTOR_AUTO_UPDATE=false`: Optional, set to false to prevent auto-upgrading yt-dlp and gallery-dl on startup.
     Restrict file permissions on the host: `chmod 600 .env`.
 
 4.  **Start the Bot**:

@@ -30,3 +30,22 @@ def test_update_oci_script_hardened():
     # 3. Validates REF
     assert "REF" in content
     assert "A-Za-z0-9" in content
+
+
+def test_entrypoint_extractor_auto_update_flag():
+    """Verify entrypoint.sh reads EXTRACTOR_AUTO_UPDATE, defaults to true, and has both branches."""
+    entrypoint_path = os.path.join(os.path.dirname(__file__), "..", "entrypoint.sh")
+    with open(entrypoint_path, "r") as f:
+        content = f.read()
+
+    # 1. Flag is read
+    assert "EXTRACTOR_AUTO_UPDATE" in content
+
+    # 2. Default is true
+    assert 'EXTRACTOR_AUTO_UPDATE="${EXTRACTOR_AUTO_UPDATE:-true}"' in content or 'EXTRACTOR_AUTO_UPDATE:-true' in content
+
+    # 3. Both branches exist
+    assert 'if [ "$EXTRACTOR_AUTO_UPDATE" = "true" ]' in content or 'if [ "$EXTRACTOR_AUTO_UPDATE" == "true" ]' in content
+    assert "pip install --no-cache-dir --upgrade yt-dlp gallery-dl" in content
+    assert "else" in content
+    assert "pinned" in content.lower() or "EXTRACTOR_AUTO_UPDATE=false" in content
