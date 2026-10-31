@@ -10,9 +10,44 @@ from core.queue import _env_int
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
 
+# Maximum files downloaded per job (G4)
+_MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
+
 # Admin cookie fallback is opt-in (item 8).
 # Default is disabled to prevent inadvertently sharing admin credentials.
 _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false').lower() == 'true'
+
+
+def _parse_cookie_owner_map(raw: Optional[str]) -> Dict[str, str]:
+    """Parse COOKIE_OWNER_MAP env var into identity -> owner mapping."""
+    if not raw or not raw.strip():
+        return {}
+    owner_map: Dict[str, str] = {}
+    has_malformed = False
+    for item in raw.split(','):
+        entry = item.strip()
+        if not entry:
+            continue
+        parts = entry.split(':')
+        if len(parts) == 2 and re.match(r'^-?\d+$', parts[0]) and re.match(r'^-?\d+$', parts[1]):
+            owner_map[parts[0]] = parts[1]
+        else:
+            has_malformed = True
+    if has_malformed:
+        logging.warning("⚠️ Malformed entry detected in COOKIE_OWNER_MAP; ignored")
+    return owner_map
+
+
+# Explicit cookie-owner mapping for channel/anonymous identities (C1)
+_COOKIE_OWNER_MAP = _parse_cookie_owner_map(os.getenv('COOKIE_OWNER_MAP'))
+
+
+def _mask_id(uid: Optional[str]) -> str:
+    """Mask identity for privacy in logs."""
+    if not uid:
+        return "***"
+    s = str(uid)
+    return f"{s[:3]}***{s[-3:]}" if len(s) > 6 else "***"
 
 
 from downloaders.base import BaseDownloader
@@ -55,8 +90,8 @@ class GalleryDLDownloader(BaseDownloader):
             # Get list of files before download (only in this job's folder)
             files_before = self._get_download_files(job_output_path)
             
-            cookie_file = self._get_cookie_file(platform, user_id)
-            
+            tried_cookie = None
+
             # 1. Try download without cookies first
             command = self._build_command(url, platform, user_id, job_output_path, use_cookies=False)
             
@@ -64,12 +99,30 @@ class GalleryDLDownloader(BaseDownloader):
             logging.debug(f"Command: {' '.join(command)}")
             
             # Execute gallery-dl with retry logic (Async)
-            result = await self._execute_with_retry(command, progress_callback=progress_callback)
+            result = await self._execute_with_retry(command, progress_callback=progress_callback, job_dir=job_output_path)
             
             # Find new files after gallery-dl attempt
             files_after = self._get_download_files(job_output_path)
             new_files = [f for f in files_after if f not in files_before]
             
+            if result.get('limit_reached'):
+                if not new_files:
+                    logging.warning(f"⚠️ {platform} download reached limit before any file completed")
+                    return {
+                        'success': False,
+                        'error': "Download stopped: limit reached before any file completed",
+                        'platform': platform,
+                        'limit_reached': True,
+                    }
+                logging.info(f"🛑 {platform} download reached limit; returning {len(new_files)} completed files")
+                return {
+                    'success': True,
+                    'files': new_files,
+                    'platform': platform,
+                    'message': "Download stopped: limit reached",
+                    'limit_reached': True,
+                }
+
             if result['success']:
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded successfully! ({len(new_files)} files)")
@@ -92,17 +145,34 @@ class GalleryDLDownloader(BaseDownloader):
                 result['message'] = "Downloads completed (with some errors)"
                 return result
 
-            # 2. When download without cookies fails, retry with best available cookie.
-            # Always try admin/default fallback here — the first attempt already failed
-            # without credentials, so using any cookie is safe regardless of ALLOW_ADMIN_COOKIE_FALLBACK.
-            retry_cookie = cookie_file or self._get_any_cookie(platform)
-            if retry_cookie:
+            # 2. When download without cookies fails, retry with user's/allowed cookie.
+            retry_cookie = self._get_cookie_file(platform, user_id)
+            if retry_cookie and retry_cookie != tried_cookie:
+                tried_cookie = retry_cookie
                 logging.info(f"🔄 Retrying {platform} via gallery-dl with cookies: {os.path.basename(retry_cookie)}...")
-                command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True, cookie_override=retry_cookie)
-                result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback)
+                command_with_cookies = self._build_command(url, platform, user_id, job_output_path, use_cookies=True)
+                result = await self._execute_with_retry(command_with_cookies, progress_callback=progress_callback, job_dir=job_output_path)
 
                 files_after = self._get_download_files(job_output_path)
                 new_files = [f for f in files_after if f not in files_before]
+
+                if result.get('limit_reached'):
+                    if not new_files:
+                        logging.warning(f"⚠️ {platform} download reached limit with cookies before any file completed")
+                        return {
+                            'success': False,
+                            'error': "Download stopped: limit reached before any file completed",
+                            'platform': platform,
+                            'limit_reached': True,
+                        }
+                    logging.info(f"🛑 {platform} download reached limit with cookies; returning {len(new_files)} completed files")
+                    return {
+                        'success': True,
+                        'files': new_files,
+                        'platform': platform,
+                        'message': "Download stopped: limit reached",
+                        'limit_reached': True,
+                    }
 
                 if result['success']:
                     if new_files:
@@ -124,7 +194,7 @@ class GalleryDLDownloader(BaseDownloader):
             fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram", "Generic"]
             if platform in fallback_platforms:
                 logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback, cookie_override=retry_cookie)
+                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback)
                 if fallback_result and fallback_result['success']:
                     return fallback_result
                 elif fallback_result:
@@ -145,7 +215,7 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None, cookie_override: Optional[str] = None) -> Dict:
+    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).
         
@@ -156,7 +226,6 @@ class GalleryDLDownloader(BaseDownloader):
             output_path: Isolated output directory
             files_before: Set of files before request started
             progress_callback: Optional progress callback
-            cookie_override: Optional explicit cookie file path to use
             
         Returns:
             Dict with download result
@@ -175,7 +244,7 @@ class GalleryDLDownloader(BaseDownloader):
             ]
             
             # Add cookies if available
-            cookie_file = cookie_override or self._get_cookie_file(platform, user_id)
+            cookie_file = self._get_cookie_file(platform, user_id)
             if cookie_file:
                 logging.info(f"🍪 Using {platform} cookies with yt-dlp: {os.path.basename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
@@ -188,16 +257,30 @@ class GalleryDLDownloader(BaseDownloader):
             logging.info(f"📥 Downloading {platform} content via yt-dlp...")
             
             # Re-use _execute_with_retry since it now supports streaming and progress
-            result = await self._execute_with_retry(command, progress_callback=progress_callback)
+            result = await self._execute_with_retry(command, progress_callback=progress_callback, job_dir=output_path)
             
+            files_after = self._get_download_files(output_path)
+            new_files = [f for f in files_after if f not in files_before]
+
+            if result.get('limit_reached'):
+                if not new_files:
+                    logging.warning(f"⚠️ {platform} yt-dlp download reached limit before any file completed")
+                    return {
+                        'success': False,
+                        'error': "Download stopped: limit reached before any file completed",
+                        'platform': platform,
+                        'limit_reached': True,
+                    }
+                logging.info(f"🛑 {platform} yt-dlp download reached limit; returning {len(new_files)} completed files")
+                return {
+                    'success': True,
+                    'files': new_files,
+                    'platform': platform,
+                    'message': "Download stopped: limit reached",
+                    'limit_reached': True,
+                }
+
             if result['success']:
-                # Find new files
-                files_after = self._get_download_files(output_path)
-                
-                # Use files_before as baseline to capture all files new since request start, 
-                # regardless of which downloader produced them.
-                new_files = [f for f in files_after if f not in files_before]
-                
                 if new_files:
                     logging.info(f"✅ {platform} content downloaded via yt-dlp! ({len(new_files)} files)")
                     return {
@@ -238,19 +321,19 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str, use_cookies: bool = True, cookie_override: Optional[str] = None) -> list:
+    def _build_command(self, url: str, platform: str, user_id: Optional[str], output_path: str, use_cookies: bool = True) -> list:
         """Build gallery-dl command with appropriate options."""
         command = [
             'gallery-dl',
             '-d', output_path,
             '--no-mtime',  # Don't set file modification time
             f'--filesize-max={_MAX_FILE_SIZE_MB}m',
+            f'--range=1-{_MAX_FILES_PER_JOB}',
         ]
         
         # Add cookie support
         if use_cookies:
-            # Prefer explicit override (e.g., admin/default cookie for retry path)
-            cookie_file = cookie_override or self._get_cookie_file(platform, user_id)
+            cookie_file = self._get_cookie_file(platform, user_id)
             if cookie_file:
                 logging.info(f"🍪 Using {platform} cookies: {os.path.basename(cookie_file)}")
                 command.extend(['--cookies', cookie_file])
@@ -264,40 +347,11 @@ class GalleryDLDownloader(BaseDownloader):
         
         return command
 
-    def _get_any_cookie(self, platform: str) -> Optional[str]:
-        """
-        Find any available cookie for the platform (admin, default, or first existing),
-        to retry downloads that failed without credentials.
-        """
-        platform_lower = re.sub(r'[^\w\-]', '', platform.lower()) or 'unknown'
-
-        # 1. Admin cookie
-        if self.admin_id:
-            s_admin = re.sub(r'[^\w\-]', '', str(self.admin_id)) or 'unknown'
-            admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
-            if os.path.exists(admin_cookie):
-                return admin_cookie
-
-        # 2. Legacy default cookie (e.g. instagram.txt)
-        default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
-        if os.path.exists(default_cookie):
-            return default_cookie
-
-        # 3. Any available platform cookie in cookie_path
-        try:
-            prefix = f"{platform_lower}_"
-            for fname in sorted(os.listdir(self.cookie_path)):
-                if fname.startswith(prefix) and fname.endswith(".txt"):
-                    return os.path.join(self.cookie_path, fname)
-        except OSError:
-            pass
-
-        return None
-
     def _get_cookie_file(self, platform: str, user_id: Optional[str]) -> Optional[str]:
         """
         Get the best available cookie file:
         1. Specific user cookies
+        1.5 Mapped owner cookies (for channel/anonymous identities via COOKIE_OWNER_MAP)
         2. Admin fallback cookies (only when ALLOW_ADMIN_COOKIE_FALLBACK=true)
         3. Legacy default cookies
 
@@ -315,19 +369,37 @@ class GalleryDLDownloader(BaseDownloader):
             s_uid = _sanitize_id(user_id)
             user_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_uid}.txt")
             if os.path.exists(user_cookie):
+                logging.info(f"🍪 Cookie source: user (identity: {_mask_id(user_id)}) for {platform}")
                 return user_cookie
+
+        # 1.5 Mapped Owner Cookies (C1)
+        if user_id and str(user_id) in _COOKIE_OWNER_MAP:
+            mapped_owner = _COOKIE_OWNER_MAP[str(user_id)]
+            s_owner = _sanitize_id(mapped_owner)
+            mapped_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_owner}.txt")
+            if os.path.exists(mapped_cookie):
+                logging.info(f"🍪 Cookie source: mapped owner (identity: {_mask_id(user_id)}) for {platform}")
+                return mapped_cookie
+            # If mapped owner file does not exist, return None without falling through
+            if str(user_id).startswith('-'):
+                logging.info(f"💡 Hint: Negative ID {_mask_id(user_id)} found no cookie file. Check mapped owner cookies or COOKIE_OWNER_MAP.")
+            return None
 
         # 2. Admin Fallback — only when explicitly opted in
         if _ALLOW_ADMIN_COOKIE_FALLBACK and self.admin_id and self.admin_id != user_id:
             s_admin = _sanitize_id(self.admin_id)
             admin_cookie = os.path.join(self.cookie_path, f"{platform_lower}_{s_admin}.txt")
             if os.path.exists(admin_cookie):
-                logging.info(f"💡 using Admin cookies for {platform} (Fallback)")
+                logging.info(f"🍪 Cookie source: admin fallback (identity: {_mask_id(user_id)}) for {platform}")
                 return admin_cookie
 
         # 3. Legacy Default
         default_cookie = os.path.join(self.cookie_path, f"{platform_lower}.txt")
         if os.path.exists(default_cookie):
+            logging.info(f"🍪 Cookie source: legacy (identity: {_mask_id(user_id)}) for {platform}")
             return default_cookie
+
+        if user_id and str(user_id).startswith('-'):
+            logging.info(f"💡 Hint: Negative ID {_mask_id(user_id)} found no cookie file. Configure COOKIE_OWNER_MAP in .env to map channel/anonymous identities to an owner.")
 
         return None

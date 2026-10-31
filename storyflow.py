@@ -68,12 +68,19 @@ def _startup_permissions():
 
 def setup_logging():
     """Configure logging for the application with sensitive data filtering."""
-    from utils.log_sanitizer import SensitiveDataFilter
+    from utils.log_sanitizer import SensitiveDataFilter, SanitizingFormatter
     from logging.handlers import RotatingFileHandler
-    
+
     # Create logs directory if it doesn't exist
     os.makedirs('logs', exist_ok=True)
-    
+
+    _fmt = '%(asctime)s - %(levelname)s - %(message)s'
+    _datefmt = '%H:%M:%S'
+
+    # Use SanitizingFormatter so tracebacks are also redacted (G2)
+    file_formatter = SanitizingFormatter(_fmt, datefmt=_datefmt)
+    console_formatter = SanitizingFormatter(_fmt, datefmt=_datefmt)
+
     # Configure rotating file handler (10MB max, keep 5 backups)
     file_handler = RotatingFileHandler(
         'logs/storyflow.log',
@@ -81,28 +88,24 @@ def setup_logging():
         backupCount=5,
         encoding='utf-8'
     )
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
-    ))
-    
+    file_handler.setFormatter(file_formatter)
+
     # Configure console handler
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
-    ))
-    
+    console_handler.setFormatter(console_formatter)
+
     # Setup root logger with both handlers
     logging.basicConfig(
         level=logging.INFO,
         handlers=[file_handler, console_handler]
     )
-    
-    # Add sensitive data filter to handlers (this catches library logs too)
+
+    # Also add the filter-based guard so any handler added later (e.g. by
+    # third-party libraries) still benefits from redaction on msg/args.
     sensitive_filter = SensitiveDataFilter()
     file_handler.addFilter(sensitive_filter)
     console_handler.addFilter(sensitive_filter)
+
 
 
 def print_banner():

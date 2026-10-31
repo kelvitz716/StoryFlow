@@ -13,6 +13,12 @@ from utils.log_sanitizer import sanitize_string
 # Wall-clock timeout for every subprocess call (seconds).
 _DOWNLOAD_TIMEOUT = _env_int('DOWNLOAD_TIMEOUT_SECONDS', 600, 10, 86400)
 
+# Cumulative download size limit per job in MB (G4).
+_MAX_JOB_SIZE_MB = _env_int('MAX_JOB_SIZE_MB', 2048, 10, 100000)
+
+# Maximum files downloaded per job (G4).
+_MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
+
 # Maximum stderr tail to keep in memory (bytes). Prevents OOM on a phone.
 _STDERR_TAIL_BYTES = 65_536  # 64 KB
 
@@ -22,6 +28,25 @@ _STDOUT_MAX_BYTES = 65_536  # 64 KB
 
 # Pipe buffer size — 1 MB avoids ValueError on very long gallery-dl JSON lines.
 _PIPE_LIMIT = 1_048_576  # 1 MB
+
+
+def _clean_partial_files(directory: str) -> None:
+    """Delete partial and temporary files (e.g. .part, .ytdl, .tmp) in directory."""
+    if not os.path.isdir(directory):
+        return
+    for root, _, filenames in os.walk(directory):
+        for fname in filenames:
+            fname_lower = fname.lower()
+            if (
+                fname_lower.endswith('.part')
+                or fname_lower.endswith('.ytdl')
+                or fname_lower.endswith('.tmp')
+                or '.part-' in fname_lower
+            ):
+                try:
+                    os.remove(os.path.join(root, fname))
+                except OSError:
+                    pass
 
 
 async def _drain_stderr(stderr_stream: asyncio.StreamReader) -> bytes:
@@ -92,19 +117,29 @@ class BaseDownloader:
             return True
         return False
 
-    async def _execute_with_retry(self, command: list, process_name: str = "subprocess", max_attempts: int = 3, progress_callback: Optional[Callable] = None) -> Dict:
+    async def _execute_with_retry(
+        self,
+        command: list,
+        process_name: str = "subprocess",
+        max_attempts: int = 3,
+        progress_callback: Optional[Callable] = None,
+        job_dir: Optional[str] = None,
+        check_interval: float = 2.0,
+    ) -> Dict:
         """
         Execute command with unified async retry logic, concurrent stderr drain,
-        wall-clock timeout, and process-group cleanup.
+        wall-clock timeout, size/file-count watchdog, and process-group cleanup.
 
-        Key safety properties (item 4):
+        Key safety properties (item 4, G4):
         - start_new_session=True: subprocess gets its own process group so we can
-          killpg the whole tree on timeout.
+          killpg the whole tree on timeout or size limit.
         - limit=_PIPE_LIMIT: prevents ValueError on very long stdout lines
           (e.g. gallery-dl JSON output). ValueError is caught and treated as a
           regular line read error rather than crashing the job.
         - Concurrent stderr drain: _drain_stderr runs as a task alongside the
-          stdout readline loop. Keeps only the last 64 KB to protect RAM.
+        - Watchdog task: every 2s checks cumulative file size and file count in
+          job_dir. If MAX_JOB_SIZE_MB or MAX_FILES_PER_JOB is exceeded, kills
+          process group, cleans partial files, and terminates without retry.
         - Wall-clock timeout (DOWNLOAD_TIMEOUT_SECONDS, default 600 s): on
           expiry the whole process group is killed and the drain task is
           cancelled.
@@ -112,11 +147,18 @@ class BaseDownloader:
           are surfaced to callers. Full stderr is logged at DEBUG level.
         """
         last_stderr_text = ""
+        target_dir = job_dir or self.output_path
+        max_job_bytes = _MAX_JOB_SIZE_MB * 1024 * 1024
+
         for attempt in range(1, max_attempts + 1):
             process = None
             stderr_task = None
+            watchdog_task = None
             stderr_text = ""
             returncode = None
+            limit_hit = False
+            limit_reason = ""
+
             try:
                 # Async subprocess execution with process group isolation
                 process = await asyncio.create_subprocess_exec(
@@ -129,6 +171,54 @@ class BaseDownloader:
 
                 # Start concurrent stderr drain BEFORE reading stdout
                 stderr_task = asyncio.create_task(_drain_stderr(process.stderr))
+
+                # G4 watchdog task: checks job_dir total size and file count every check_interval seconds
+                async def _watchdog():
+                    nonlocal limit_hit, limit_reason
+                    try:
+                        while process.returncode is None:
+                            await asyncio.sleep(check_interval)
+                            if not os.path.exists(target_dir):
+                                continue
+                            total_size = 0
+                            file_count = 0
+                            for root, _, files in os.walk(target_dir):
+                                for f in files:
+                                    if not f.startswith('.'):
+                                        file_count += 1
+                                    fp = os.path.join(root, f)
+                                    try:
+                                        total_size += os.path.getsize(fp)
+                                    except OSError:
+                                        pass
+
+                            if total_size > max_job_bytes:
+                                limit_hit = True
+                                limit_reason = f"Download size limit reached ({_MAX_JOB_SIZE_MB} MB cap)"
+                                logging.warning(f"⚠️ {process_name}: {limit_reason}")
+                                try:
+                                    pgid = os.getpgid(process.pid)
+                                    os.killpg(pgid, signal.SIGKILL)
+                                except (ProcessLookupError, OSError):
+                                    pass
+                                break
+
+                            if file_count > _MAX_FILES_PER_JOB:
+                                limit_hit = True
+                                limit_reason = f"File count limit reached ({_MAX_FILES_PER_JOB} files cap)"
+                                logging.warning(f"⚠️ {process_name}: {limit_reason}")
+                                try:
+                                    pgid = os.getpgid(process.pid)
+                                    os.killpg(pgid, signal.SIGKILL)
+                                except (ProcessLookupError, OSError):
+                                    pass
+                                break
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:
+                        logging.debug(f"Watchdog error: {exc}")
+
+                watchdog_task = asyncio.create_task(_watchdog())
 
                 stdout_lines: deque[str] = deque(maxlen=_STDOUT_MAX_LINES)
                 stdout_bytes = 0
@@ -213,8 +303,27 @@ class BaseDownloader:
                         except asyncio.CancelledError:
                             pass
                     raise TimeoutError(f"Process exceeded {_DOWNLOAD_TIMEOUT}s wall-clock timeout")
+                finally:
+                    if watchdog_task and not watchdog_task.done():
+                        watchdog_task.cancel()
+                        try:
+                            await watchdog_task
+                        except asyncio.CancelledError:
+                            pass
 
                 stdout_text = "\n".join(stdout_lines)
+
+                # If the watchdog killed the process due to size/file count limit
+                if limit_hit:
+                    _clean_partial_files(target_dir)
+                    return {
+                        'success': False,
+                        'limit_reached': True,
+                        'error': limit_reason,
+                        'message': "Download stopped: limit reached",
+                        'platform': process_name,
+                        'stdout': stdout_text,
+                    }
 
                 # Log full stderr for debugging; never return it to callers
                 if stderr_text:

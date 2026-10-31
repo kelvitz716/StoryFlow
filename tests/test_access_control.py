@@ -252,3 +252,177 @@ class TestPurgeConfirmNoNameError:
         _log.getLogger("httpcore").setLevel(_log.WARNING)
         assert _log.getLogger("httpx").level == _log.WARNING
         assert _log.getLogger("httpcore").level == _log.WARNING
+
+
+# ---------------------------------------------------------------------------
+# G1 — handle_url uses require_allowed; queue_command filters by user
+# ---------------------------------------------------------------------------
+
+def _make_update_group(user_id: str, chat_id: str, chat_type: str = "group", text: str = "https://example.com") -> MagicMock:
+    """Build a fake Update for group messages with distinct chat_id."""
+    update = MagicMock()
+    update.effective_user = MagicMock()
+    update.effective_user.id = int(user_id)
+    update.effective_chat = MagicMock()
+    update.effective_chat.type = chat_type
+    update.effective_chat.id = int(chat_id)
+    msg = MagicMock()
+    msg.reply_text = AsyncMock()
+    msg.text = text
+    msg.is_automatic_forward = False
+    msg.sender_chat = None
+    msg.date = None
+    update.effective_message = msg
+    update.message = msg
+    # make update.message_id / update_id work
+    update.update_id = 1
+    update.edited_message = None
+    update.channel_post = None
+    update.edited_channel_post = None
+    return update
+
+
+class TestHandleUrlG1:
+    """G1 tests for handle_url access control."""
+
+    @pytest.mark.asyncio
+    async def test_non_allowed_user_in_group_gets_no_reply(self):
+        """Non-allowed user posting a URL in a group gets no reply, nothing enqueued."""
+        from core.queue import DownloadQueue, JobStatus
+        am = _make_access_manager(admin_id="9999")
+        # user 1111 not allowed, chat -200 not allowed
+        update = _make_update_group("1111", "-200", chat_type="group")
+        ctx = _make_context()
+
+        dq = MagicMock()
+        dq.add_job = AsyncMock(return_value=None)
+
+        from bot.handlers import handle_url
+        with patch("bot.handlers.resolve_shortlink", return_value=None), \
+             patch("bot.handlers.identify_platform", return_value="Generic"):
+            await handle_url(update, ctx, am, dq)
+
+        update.message.reply_text.assert_not_called()
+        dq.add_job.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_allowed_user_in_private_gets_rejection(self):
+        """Non-allowed user in private chat gets a standard rejection, nothing enqueued."""
+        am = _make_access_manager(admin_id="9999")
+        update = _make_update("1111", chat_type="private", text="https://example.com")
+        # Wire effective_chat.id and effective_chat.type properly for require_allowed
+        update.effective_chat.id = 1111
+        update.effective_chat.type = "private"
+        update.effective_message.is_automatic_forward = False
+        update.effective_message.sender_chat = None
+        update.effective_message.date = None
+        ctx = _make_context()
+
+        dq = MagicMock()
+        dq.add_job = AsyncMock(return_value=None)
+
+        from bot.handlers import handle_url
+        with patch("bot.handlers.resolve_shortlink", return_value=None):
+            await handle_url(update, ctx, am, dq)
+
+        update.effective_message.reply_text.assert_called_once()
+        dq.add_job.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allowlisted_group_chat_is_accepted(self):
+        """A URL sent from an allowlisted group chat is accepted (no rejection)."""
+        am = _make_access_manager(admin_id="9999", allowed=["-200"])
+        update = _make_update_group("1111", "-200", chat_type="group", text="https://www.instagram.com/p/abc123/")
+        ctx = _make_context()
+
+        fake_job = MagicMock()
+        fake_job.job_id = "job-abc"
+        dq = MagicMock()
+        dq.submit = AsyncMock(return_value=fake_job)
+
+        coord = MagicMock()
+        coord.clock.return_value = 0.0
+        coord.sleep_func = AsyncMock()
+
+        from bot.handlers import handle_url
+        with patch("bot.handlers.resolve_shortlink", return_value=None), \
+             patch("bot.handlers.identify_platform", return_value="Instagram"), \
+             patch("bot.handlers.register_job_message"), \
+             patch("bot.handlers.register_backlog_job"), \
+             patch("bot.handlers.batch_upload_media", new=AsyncMock()), \
+             patch("bot.handlers.get_edit_coordinator", return_value=coord):
+            await handle_url(update, ctx, am, dq)
+
+        # No rejection reply was sent
+        call_texts = [str(c) for c in update.message.reply_text.call_args_list]
+        for t in call_texts:
+            assert "not authoris" not in t.lower() and "⛔" not in t
+
+
+class TestQueueCommandG1:
+    """G1 tests for /queue access isolation."""
+
+    def _make_job(self, user_id: str, platform: str = "Instagram"):
+        from core.queue import DownloadJob, JobStatus
+        import uuid
+        job = MagicMock(spec=DownloadJob)
+        job.user_id = user_id
+        job.platform = platform
+        job.status = JobStatus.DOWNLOADING
+        return job
+
+    @pytest.mark.asyncio
+    async def test_non_admin_sees_only_own_jobs(self):
+        """A non-admin user B never sees user A's jobs in /queue."""
+        am = _make_access_manager(admin_id="9999", allowed=["1111", "2222"])
+        # Call as user 2222
+        update = _make_update("2222", chat_type="private")
+        update.effective_chat.id = 2222
+        ctx = _make_context()
+
+        job_a = self._make_job("1111")
+        job_b = self._make_job("2222")
+
+        dq = MagicMock()
+        dq.get_stats.return_value = {
+            "pending": 1,
+            "active": 2,
+            "max_concurrent": 4,
+            "active_jobs": [job_a, job_b],
+        }
+
+        from bot.handlers import queue_command
+        await queue_command(update, ctx, am, dq)
+
+        reply_text = update.message.reply_text.call_args[0][0]
+        # job_b shows up (platform = Instagram)
+        assert "Instagram" in reply_text or "downloading" in reply_text.lower()
+        # User A's last-4 digits must NOT appear
+        assert "1111"[-4:] not in reply_text
+
+    @pytest.mark.asyncio
+    async def test_admin_sees_all_jobs(self):
+        """Admin sees all jobs, including other users'."""
+        am = _make_access_manager(admin_id="9999", allowed=["1111", "2222"])
+        update = _make_update("9999", chat_type="private")
+        update.effective_chat.id = 9999
+        ctx = _make_context()
+
+        job_a = self._make_job("1111")
+        job_b = self._make_job("2222")
+
+        dq = MagicMock()
+        dq.get_stats.return_value = {
+            "pending": 0,
+            "active": 2,
+            "max_concurrent": 4,
+            "active_jobs": [job_a, job_b],
+        }
+
+        from bot.handlers import queue_command
+        await queue_command(update, ctx, am, dq)
+
+        reply_text = update.message.reply_text.call_args[0][0]
+        # Both users' last-4 digits appear for admin
+        assert "1111"[-4:] in reply_text
+        assert "2222"[-4:] in reply_text

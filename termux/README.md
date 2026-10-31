@@ -177,11 +177,51 @@ request is made.
 
 ---
 
+## Host Hardening
+
+Protect your Termux installation, credentials, and network access with these host-hardening measures:
+
+### 1. Key-Only SSH Authentication
+By default, Termux sshd listens on port 8022 on all interfaces and accepts password logins. Disable passwords and enforce key-only authentication:
+
+1. **On your laptop**, generate an SSH key (if you don't already have one) and copy it to your phone:
+   ```sh
+   ssh-keygen -t ed25519
+   ssh-copy-id -p 8022 <user>@<phone>
+   ```
+2. **On your phone (in Termux)**, run the SSH hardening script:
+   ```sh
+   sh termux/harden-ssh.sh
+   ```
+3. **Verify before disconnecting**: Open a second SSH session to verify that key-based login works before closing your active session.
+
+### 2. Network Interface & Listen Address
+`sshd` listens on `0.0.0.0` (all interfaces) by default. While `sh termux/harden-ssh.sh --listen <tailnet-ip>` can restrict sshd to your Tailscale IP, note that this bind may fail at boot if the Tailscale interface is not yet up. Therefore, **key-only login is the primary protection** against unauthorized network access.
+
+### 3. Keep Storage Private (No Shared Storage)
+Keep `DOWNLOAD_PATH` inside the Termux home directory (`~/StoryFlow/downloads` or relative `./downloads`). **Do not run `termux-setup-storage` for this bot**: Android shared storage (`/sdcard`, `/storage/`, `$HOME/storage`) is accessible by other installed apps. The StoryFlow service script will refuse to start if `DOWNLOAD_PATH` is placed in shared storage.
+
+### 4. Dedicated Telegram Account with 2FA
+Use a dedicated Telegram account with Two-Factor Authentication (2FA) enabled for the MTProto session string, rather than your personal account.
+
+### 5. "Phone Lost" Checklist
+If your phone is lost or compromised:
+1. **Terminate session**: In Telegram, go to **Settings → Devices** and terminate the active StoryFlow session.
+2. **Revoke bot token**: Message [@BotFather](https://t.me/botfather), run `/revoke` for your bot token, and update `.env` once restored.
+3. **Log out web accounts**: Invalidate sessions or change passwords for any platform accounts whose cookies were uploaded (`cookies/` directory).
+4. **Revoke network access**: Remove the device from your Tailscale admin console immediately.
+
+### 6. Device Security
+Always configure a strong screen lock (PIN, password, or biometric) and ensure full-disk encryption is enabled on the phone.
+
+---
+
 ## File Layout
 
 ```
 termux/
   setup.sh               ← first-install script
+  harden-ssh.sh          ← OpenSSH hardening script (key-only auth)
   update-extractors.sh   ← upgrade yt-dlp + gallery-dl
   service/
     run                  ← runit service script

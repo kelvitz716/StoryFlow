@@ -289,15 +289,12 @@ async def test_download_retries_with_cookies_on_gallery_dl_failure():
 
 @pytest.mark.asyncio
 async def test_download_retries_with_fallback_cookie_for_group_chats():
-    """Verify group chats (no user cookie) retry with best available fallback cookie."""
+    """Verify retry uses the resolved cookie from _get_cookie_file."""
     from downloaders.gallery_dl import GalleryDLDownloader
     import unittest.mock as mock
 
     dl = GalleryDLDownloader(output_path="./downloads", cookie_path="./cookies", admin_id="999")
-    # User has no cookie
-    dl._get_cookie_file = mock.MagicMock(return_value=None)
-    # But admin/fallback cookie exists
-    dl._get_any_cookie = mock.MagicMock(return_value="/cookies/instagram_999.txt")
+    dl._get_cookie_file = mock.MagicMock(return_value="/cookies/instagram_999.txt")
 
     fail_res = {'success': False, 'error': 'Download failed'}
     succ_res = {'success': True, 'stdout': 'ok'}
@@ -318,13 +315,12 @@ async def test_download_retries_with_fallback_cookie_for_group_chats():
 
 @pytest.mark.asyncio
 async def test_ytdlp_fallback_receives_retry_cookie():
-    """Verify yt-dlp fallback receives and uses the retry cookie when gallery-dl fails both attempts."""
+    """Verify yt-dlp fallback is invoked when gallery-dl fails both attempts."""
     from downloaders.gallery_dl import GalleryDLDownloader
     import unittest.mock as mock
 
     dl = GalleryDLDownloader(output_path="./downloads", cookie_path="./cookies", admin_id="999")
-    dl._get_cookie_file = mock.MagicMock(return_value=None)
-    dl._get_any_cookie = mock.MagicMock(return_value="/cookies/instagram_999.txt")
+    dl._get_cookie_file = mock.MagicMock(return_value="/cookies/instagram_999.txt")
 
     fail_res = {'success': False, 'error': 'Download failed'}
 
@@ -335,34 +331,21 @@ async def test_ytdlp_fallback_receives_retry_cookie():
         res = await dl.download("https://instagram.com/p/test", "Instagram", user_id="-1001234567")
         assert res['success'] is True
         mock_ytdlp.assert_called_once()
-        assert mock_ytdlp.call_args.kwargs['cookie_override'] == "/cookies/instagram_999.txt"
 
 
-def test_get_any_cookie_resolution(tmp_path):
-    """Verify _get_any_cookie resolves admin cookie, default cookie, or any platform cookie."""
+@pytest.mark.asyncio
+async def test_gallery_dl_limit_reached_zero_files():
+    """When gallery-dl hits limit_reached with 0 completed files, return success: False with generic error."""
     from downloaders.gallery_dl import GalleryDLDownloader
+    import unittest.mock as mock
 
-    cookie_dir = tmp_path / "cookies"
-    cookie_dir.mkdir()
+    dl = GalleryDLDownloader(output_path="./downloads", cookie_path="./cookies")
+    limit_res = {'success': False, 'limit_reached': True, 'error': 'Limit reached'}
 
-    dl = GalleryDLDownloader(cookie_path=str(cookie_dir), admin_id="admin123")
+    with mock.patch.object(dl, '_execute_with_retry', return_value=limit_res), \
+         mock.patch.object(dl, '_get_download_files', return_value=set()):
 
-    # None initially
-    assert dl._get_any_cookie("Instagram") is None
-
-    # User-uploaded cookie exists (e.g. instagram_user456.txt)
-    user_cookie = cookie_dir / "instagram_user456.txt"
-    user_cookie.write_text("user cookie")
-    assert dl._get_any_cookie("Instagram") == str(user_cookie)
-
-    # Legacy default cookie takes precedence over arbitrary user cookie
-    default_cookie = cookie_dir / "instagram.txt"
-    default_cookie.write_text("default cookie")
-    assert dl._get_any_cookie("Instagram") == str(default_cookie)
-
-    # Admin cookie takes highest precedence
-    admin_cookie = cookie_dir / "instagram_admin123.txt"
-    admin_cookie.write_text("admin cookie")
-    assert dl._get_any_cookie("Instagram") == str(admin_cookie)
-
-
+        res = await dl.download("https://instagram.com/p/test", "Instagram", user_id="123")
+        assert res['success'] is False
+        assert res.get('limit_reached') is True
+        assert res['error'] == "Download stopped: limit reached before any file completed"

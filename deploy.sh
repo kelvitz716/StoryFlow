@@ -2,6 +2,7 @@
 
 # Exit on error
 set -e
+umask 077
 
 echo "🚀 StoryFlow Deployment Script"
 echo "=============================="
@@ -75,7 +76,7 @@ prompt_input "Enter Telegram API ID" "TELEGRAM_API_ID" "$TELEGRAM_API_ID" "mask"
 prompt_input "Enter Telegram API Hash" "TELEGRAM_API_HASH" "$TELEGRAM_API_HASH" "mask"
 prompt_input "Enter Phone Number (for MTProto >50MB uploads)" "TELEGRAM_PHONE_NUMBER" "$TELEGRAM_PHONE_NUMBER" "mask"
 prompt_input "Enter Session String (optional, for production)" "TELEGRAM_SESSION_STRING" "$TELEGRAM_SESSION_STRING" "mask"
-prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "618026357" "mask"
+prompt_input "Enter Admin User ID" "ADMIN_USER_ID" "" "mask"
 prompt_input "Enter Mode (telegram/cli)" "MODE" "telegram"
 
 # 2. Write to .env
@@ -110,43 +111,29 @@ TELEGRAM_SESSION_STRING=$TELEGRAM_SESSION_STRING
 # Mode: cli or telegram
 MODE=$MODE
 EOF
+chmod 600 .env
 
 # 3. Build Docker Image
 echo "🔨 Building Docker image (this may take a minute)..."
 docker build -t storyflow .
 
-# 4. Prepare directories
-mkdir -p downloads cookies sessions
-
-# 5. Run Container
-echo "🏃 Starting container..."
-# Stop existing container if running
-docker stop storyflow_app 2>/dev/null || true
-docker rm storyflow_app 2>/dev/null || true
-
-# Fix permissions for mounted directories (using container UID 1000)
-# We use a temporary alpine container to chown the volumes. 
-# This works even if the host user doesn't have sudo, because docker runs as root.
-mkdir -p downloads cookies sessions data
+# 4. Prepare directories and permissions
+mkdir -p downloads cookies sessions data logs
 echo "🔒 Setting permissions for volumes (UID 1000)..."
 docker run --rm \
     -v "$(pwd)/downloads:/downloads" \
     -v "$(pwd)/cookies:/cookies" \
     -v "$(pwd)/sessions:/sessions" \
     -v "$(pwd)/data:/data" \
-    alpine sh -c "chown -R 1000:1000 /downloads /cookies /sessions /data" || echo "⚠️  Warning: Permission fix failed."
+    -v "$(pwd)/logs:/logs" \
+    alpine sh -c "chown -R 1000:1000 /downloads /cookies /sessions /data /logs" || echo "⚠️  Warning: Permission fix failed."
 
-# Run with host networking to avoid some DNS issues, or just standard bridge. 
-# Added :z to volumes for SELinux support (required on Fedora/CentOS/RHEL)
-docker run -d \
-    --name storyflow_app \
-    --restart unless-stopped \
-    --env-file .env \
-    -v "$(pwd)/downloads:/app/downloads:z" \
-    -v "$(pwd)/cookies:/app/cookies:z" \
-    -v "$(pwd)/sessions:/app/sessions:z" \
-    -v "$(pwd)/data:/app/data:z" \
-    storyflow
+# Ensure external proxy network exists
+docker network create proxy_net 2>/dev/null || true
+
+# 5. Run Container via docker compose (reads docker-compose.yml for security settings)
+echo "🏃 Starting container via docker compose..."
+docker compose up -d --build
 
 echo "✅ Deployment successful! Container 'storyflow_app' is running."
 echo "📜 View logs with: docker logs -f storyflow_app"

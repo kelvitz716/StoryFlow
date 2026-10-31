@@ -8,6 +8,7 @@
 #   ./termux/setup.sh
 
 set -e
+umask 077
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$REPO_DIR/venv"
@@ -39,18 +40,30 @@ pip install -r "$REQ_TMP"
 rm -f "$REQ_TMP"
 
 echo "  Attempting TgCrypto install (optional — needed for MTProto large-file uploads)..."
-pip install TgCrypto && echo "  TgCrypto installed OK." \
-  || echo "  WARNING: TgCrypto build failed. MTProto large-file uploads will be unavailable."
+REQ_TMP=$(mktemp)
+if grep -iE '^tgcrypto' "$REPO_DIR/requirements.txt" > "$REQ_TMP" && [ -s "$REQ_TMP" ]; then
+  pip install -r "$REQ_TMP" && echo "  TgCrypto installed OK." \
+    || echo "  WARNING: TgCrypto build failed. MTProto large-file uploads will be unavailable."
+else
+  echo "  WARNING: No TgCrypto pinned line found in requirements.txt; skipping."
+fi
+rm -f "$REQ_TMP"
 
-# ── 4. runit service ────────────────────────────────────────────────────────
-echo "[4/4] Installing runit service files..."
+# ── 4. runit service & directories ──────────────────────────────────────────
+echo "[4/4] Installing runit service files and securing directories..."
+
+# Create directories with secure permissions (700)
+mkdir -p -m 700 "$REPO_DIR/sessions" "$REPO_DIR/cookies" "$REPO_DIR/data" "$HOME/logs/storyflow"
+chmod 700 "$REPO_DIR/sessions" "$REPO_DIR/cookies" "$REPO_DIR/data" "$HOME/logs/storyflow"
+
+# Create .env securely if missing
+[ -f "$REPO_DIR/.env" ] || install -m 600 "$REPO_DIR/.env.example" "$REPO_DIR/.env"
 
 # Termux's sv-enable reads from $SVDIR (defaults to ~/.config/runit/sv).
 # Fall back to the env var if set, otherwise use the Termux default.
 RUNIT_SV_DIR="${SVDIR:-$HOME/.config/runit/sv}"
 SV_DIR="$RUNIT_SV_DIR/storyflow"
 mkdir -p "$SV_DIR/log"
-mkdir -p "$HOME/logs/storyflow"
 
 # Copy service scripts and make them executable
 cp "$REPO_DIR/termux/service/run"     "$SV_DIR/run"
@@ -61,16 +74,18 @@ echo ""
 echo "=== Setup complete! ==="
 echo ""
 echo "Next steps:"
-echo "  1. Copy .env.example to .env and fill in your values:"
-echo "       cp $REPO_DIR/.env.example $REPO_DIR/.env"
+echo "  1. Edit .env and fill in your values:"
 echo "       nano $REPO_DIR/.env"
 echo ""
-echo "  2. Enable and start the service:"
+echo "  2. Secure your SSH server (recommended):"
+echo "       sh termux/harden-ssh.sh"
+echo ""
+echo "  3. Enable and start the service:"
 echo "       sv-enable storyflow"
 echo "       sv start storyflow"
 echo ""
-echo "  3. Check logs:"
+echo "  4. Check logs:"
 echo "       tail -f $HOME/logs/storyflow/current"
 echo ""
-echo "  4. See termux/README.md for battery optimisation and wake-lock info."
+echo "  5. See termux/README.md for battery optimisation and wake-lock info."
 echo "  Service installed to: $SV_DIR"

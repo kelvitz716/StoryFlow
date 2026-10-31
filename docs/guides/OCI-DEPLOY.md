@@ -57,6 +57,8 @@ TELEGRAM_SESSION_STRING=
 MODE=telegram
 ```
 
+Restrict permissions on the host file: `chmod 600 .env`.
+
 After editing, restart the container to apply changes:
 
 ```bash

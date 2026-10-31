@@ -55,6 +55,8 @@ If you prefer to run directly on your host:
     - `TELEGRAM_BOT_TOKEN`: From @BotFather.
     - `ADMIN_USER_ID`: Your Telegram ID (to authorize commands).
     - `MODE=telegram`: To run the bot.
+    - `EXTRACTOR_AUTO_UPDATE=false`: Optional, set to false to prevent auto-upgrading yt-dlp and gallery-dl on startup.
+    Restrict file permissions on the host: `chmod 600 .env`.
 
 4.  **Start the Bot**:
     ```bash
@@ -67,3 +69,18 @@ To support files > 50MB, you must provide `TELEGRAM_API_ID` and `TELEGRAM_API_HA
 
 > [!TIP]
 > **2FA**: If you have 2FA enabled, you will also need to enter your Cloud Password in the terminal or via the bot's admin menu.
+
+## Channel & Anonymous Cookie Mapping (`COOKIE_OWNER_MAP`)
+
+When downloads are requested by Telegram channels or anonymous admin posts (which have negative numeric IDs such as `-1001234567890`), StoryFlow requires an explicit mapping to associate the channel with an owner's cookie file.
+
+Add `COOKIE_OWNER_MAP` to `.env`:
+```env
+COOKIE_OWNER_MAP=-1001234567890:123456789,-1009876543210:123456789
+```
+
+- **Format**: `identity:owner,identity:owner` (comma-separated pairs of digits with an optional leading `-`).
+- **Behavior**: The channel job attempts to use the mapped owner's cookie file (e.g. `instagram_123456789.txt`).
+- **Priority**: A user's own cookie file always takes priority if present.
+- **Isolation**: Unmapped channel identities never fall through to other users' cookies.
+

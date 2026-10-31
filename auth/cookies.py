@@ -8,6 +8,36 @@ from typing import Dict, Optional
 from datetime import datetime, timezone
 
 
+def _sanitize_name(name: str) -> str:
+    """Sanitize a name to prevent directory traversal (only allow alphanumeric, underscore, and dash)."""
+    # Remove any characters that aren't alphanumeric, underscore, or dash
+    sanitized = re.sub(r'[^\w\-]', '', name)
+    # Fallback to 'unknown' if empty
+    return sanitized or 'unknown'
+
+
+def delete_user_cookies(user_id: str, cookie_path: Optional[str] = None) -> int:
+    """
+    Remove every file in the cookie directory whose name ends with _<sanitized_user_id>.txt.
+    Returns the number of deleted files.
+    """
+    if cookie_path is None:
+        cookie_path = os.getenv('COOKIE_PATH', './cookies')
+    s_user_id = _sanitize_name(str(user_id))
+    suffix = f"_{s_user_id}.txt"
+    deleted = 0
+    if not os.path.isdir(cookie_path):
+        return 0
+    for filename in os.listdir(cookie_path):
+        if filename.endswith(suffix):
+            try:
+                os.remove(os.path.join(cookie_path, filename))
+                deleted += 1
+            except OSError as e:
+                logging.warning(f"Failed to remove cookie file {filename}: {e}")
+    return deleted
+
+
 class CookieManager:
     """Manage cookie files for authenticated downloads."""
     
@@ -23,10 +53,11 @@ class CookieManager:
     
     def _sanitize_name(self, name: str) -> str:
         """Sanitize a name to prevent directory traversal (only allow alphanumeric, underscore, and dash)."""
-        # Remove any characters that aren't alphanumeric, underscore, or dash
-        sanitized = re.sub(r'[^\w\-]', '', name)
-        # Fallback to 'unknown' if empty
-        return sanitized or 'unknown'
+        return _sanitize_name(name)
+
+    def delete_user_cookies(self, user_id: str) -> int:
+        """Delete all cookie files for user."""
+        return delete_user_cookies(user_id, self.cookie_path)
 
     def save_cookie_file(self, user_id: str, platform: str, file_path: str) -> Dict:
         """

@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, Application
 
 from core.platform import identify_platform
 from auth.access import AccessManager
-from auth.cookies import CookieManager  # [NEW]
+from auth.cookies import CookieManager, delete_user_cookies  # [NEW]
 from bot.menus import send_main_menu, send_help_menu, send_admin_menu, send_cookies_menu, send_delete_cookies_menu
 from bot.uploader import batch_upload_media
 from utils.bot_utils import format_error_message, get_platform_emoji, escape_markdown, register_job_message, resolve_shortlink, UnsafeRedirectError, JOB_MESSAGES
@@ -269,9 +269,13 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # Clear any ghosted UI states when the user explicitly sends a new URL
     context.user_data.pop('awaiting_cookies', None)
 
-    # Resolve sender identity
+    # Check authorization — silent in groups, rejection message in private chat.
+    if not await require_allowed(update, access_manager):
+        return
+
+    # Resolve sender identity (kept after the guard so user_id is always valid)
     raw_user_id = str(update.effective_user.id) if update.effective_user else None
-    
+
     if msg.is_automatic_forward and msg.sender_chat:
         user_id = str(msg.sender_chat.id)
     elif raw_user_id is not None and access_manager.is_system_sender(raw_user_id):
@@ -280,15 +284,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
         user_id = str(update.effective_chat.id)
     else:
         user_id = raw_user_id
-
-    if not access_manager.is_allowed(user_id):
-        if not access_manager.is_admin(user_id):
-            await msg.reply_text(
-                f"⛔ Not authorized.\n"
-                f"Ask the admin to authorize your ID: `{user_id}`",
-                parse_mode='Markdown'
-            )
-            return
 
     # ── URL extraction ────────────────────────────────────────────────────
     # Handle all cases: bare URLs, URLs embedded in text, comma/space/newline
@@ -489,31 +484,42 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, acces
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE, access_manager: AccessManager, download_queue) -> None:
     """Check the status of the background queue."""
     user_id = str(update.effective_user.id)
-    if not access_manager.is_admin(user_id):
-        await update.message.reply_text("❌ You do not have permission to view the queue.")
+    is_admin = access_manager.is_admin(user_id)
+
+    if not await require_allowed(update, access_manager):
         return
-        
+
     if not download_queue:
         await update.message.reply_text("⚠️ Queue is not initialized.")
         return
-        
+
     # Get active jobs
     stats = download_queue.get_stats()
-    pending = stats['pending']
     active_jobs = stats['active_jobs']
-    
+
+    # Non-admins see only their own jobs, never another user's ID digits.
+    if is_admin:
+        visible_jobs = active_jobs
+        pending = stats['pending']
+    else:
+        visible_jobs = [j for j in active_jobs if j.user_id == user_id]
+        pending = len(visible_jobs)
+
     msg = (
         f"📊 *Queue Status*\n\n"
         f"🔄 *Active Jobs:* {stats['active']}/{stats['max_concurrent']}\n"
         f"⏳ *Pending in Queue:* {pending}\n"
     )
-    
-    if active_jobs:
+
+    if visible_jobs:
         msg += "\n*Current Work:*\n"
-        for job in active_jobs:
+        for job in visible_jobs:
             platform_emoji = get_platform_emoji(job.platform)
-            msg += f"- {platform_emoji} _{str(job.status.value).title()}_ (UID: `{job.user_id[-4:]}`)\n"
-            
+            if is_admin:
+                msg += f"- {platform_emoji} _{str(job.status.value).title()}_ (UID: `{job.user_id[-4:]}`)\n"
+            else:
+                msg += f"- {platform_emoji} _{str(job.status.value).title()}_\n"
+
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 
@@ -556,6 +562,7 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     elif action == 'remove_user':
         if access_manager.remove_user(target_id):
+            delete_user_cookies(target_id)
             response = f"✅ `{target_id}` removed from the allowed list."
         else:
             response = f"⚠️ `{target_id}` was not in the allowed list."
