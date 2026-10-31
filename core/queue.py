@@ -40,6 +40,8 @@ class DownloadJob:
     completed_at: Optional[datetime] = None
     job_dir: Optional[str] = None
     is_already_active: bool = False
+    limit_reached: bool = False
+    limit_notice: Optional[str] = None
     
     def to_dict(self) -> Dict:
         return {
@@ -51,6 +53,7 @@ class DownloadJob:
             "progress": self.progress,
             "message": self.message,
             "files_count": len(self.files),
+            "limit_reached": self.limit_reached,
             "error": self.error,
         }
 
@@ -78,11 +81,15 @@ class DownloadQueue:
         self,
         max_concurrent: int = 10,
         max_per_user: int = 20,
-        status_callback: Optional[Callable] = None
+        status_callback: Optional[Callable] = None,
+        bot: Optional[Any] = None,
+        notice_callback: Optional[Callable] = None
     ):
         self.max_concurrent = max(1, max_concurrent)
         self.max_per_user = max(1, max_per_user)
         self.status_callback = status_callback
+        self.bot = bot
+        self.notice_callback = notice_callback
         self.download_path = os.getenv('DOWNLOAD_PATH', './downloads')
         
         self.snapchat = None
@@ -271,6 +278,8 @@ class DownloadQueue:
                     else:
                          result = {'success': False, 'error': 'Downloader not initialized'}
                     
+                    job.limit_reached = bool(result.get('limit_reached', False))
+                    
                     if not result.get('success'):
                         job.status = JobStatus.FAILED
                         job.completed_at = datetime.now()
@@ -302,6 +311,9 @@ class DownloadQueue:
                     job.message = f"Delivered {len(job.files)} files"
                     job.save_to_db()
                     await self._notify_status(job)
+
+                    if job.limit_reached:
+                        await self._send_limit_notice(job)
                     
                 except Exception as e:
                     logging.error(f"Job {job.job_id} failed with exception: {e}")
@@ -335,6 +347,57 @@ class DownloadQueue:
         if self.status_callback:
             try: await self.status_callback(job)
             except Exception as e: logging.error(f"Status callback error: {e}")
+
+    async def _send_limit_notice(self, job: DownloadJob):
+        if not getattr(job, 'limit_reached', False):
+            return
+
+        count = len(job.files)
+        is_admin = False
+        admin_env = os.getenv('ADMIN_USER_ID', '')
+        if admin_env:
+            admin_ids = [aid.strip() for aid in admin_env.split(',') if aid.strip()]
+            if str(job.user_id) in admin_ids:
+                is_admin = True
+
+        if is_admin:
+            try:
+                from downloaders.snapchat import _MAX_FILES_PER_JOB as sc_max_files, _MAX_JOB_SIZE_MB as sc_max_mb
+                text = (
+                    f"Stopped at the download limit. The first {count} files were delivered. "
+                    f"(Admin info: limit is {sc_max_files} files / {sc_max_mb} MB)"
+                )
+            except Exception:
+                text = f"Stopped at the download limit. The first {count} files were delivered."
+        else:
+            text = f"Stopped at the download limit. The first {count} files were delivered."
+
+        job.limit_notice = text
+
+        target_chat = job.chat_id or job.user_id
+        if self.bot and target_chat:
+            try:
+                if hasattr(self.bot, 'send_message'):
+                    kwargs = {"chat_id": target_chat, "text": text}
+                    if job.message_id:
+                        kwargs["reply_to_message_id"] = job.message_id
+                    res = self.bot.send_message(**kwargs)
+                    if asyncio.iscoroutine(res):
+                        await res
+                elif callable(self.bot):
+                    res = self.bot(target_chat, text)
+                    if asyncio.iscoroutine(res):
+                        await res
+            except Exception as e:
+                logging.warning(f"Could not send limit notice for job {job.job_id}: {e}")
+
+        if self.notice_callback and callable(self.notice_callback):
+            try:
+                res = self.notice_callback(job, text)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception as e:
+                logging.warning(f"Notice callback failed for job {job.job_id}: {e}")
 
     async def _background_cleanup(self):
         while self._running:
@@ -424,7 +487,9 @@ async def init_queue(
     gallery_dl_downloader,
     max_concurrent: int = None,
     max_per_user: int = None,
-    status_callback: Optional[Callable] = None
+    status_callback: Optional[Callable] = None,
+    bot: Optional[Any] = None,
+    notice_callback: Optional[Callable] = None
 ):
     global download_queue
 
@@ -442,7 +507,9 @@ async def init_queue(
     download_queue = DownloadQueue(
         max_concurrent=max_concurrent,
         max_per_user=max_per_user,
-        status_callback=status_callback
+        status_callback=status_callback,
+        bot=bot,
+        notice_callback=notice_callback
     )
     download_queue.snapchat = snapchat_downloader
     download_queue.gallery_dl = gallery_dl_downloader

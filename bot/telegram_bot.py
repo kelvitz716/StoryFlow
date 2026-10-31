@@ -337,7 +337,8 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
         download_queue = await init_queue(
             snapchat_downloader=snapchat,
             gallery_dl_downloader=gallery_dl,
-            status_callback=lambda job: update_job_status(application, job)
+            status_callback=lambda job: update_job_status(application, job),
+            bot=application.bot
         )
         
         # Recover orphaned jobs from previous crash

@@ -30,6 +30,7 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH="/app/.local/bin:${PATH}"
 ENV DOWNLOAD_PATH=/app/downloads
 ENV COOKIE_PATH=/app/cookies
 
