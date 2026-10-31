@@ -1,13 +1,16 @@
 """
-Tests for G2: SanitizingFormatter redacts secrets in tracebacks.
+Tests for G2 / K1: SanitizingFormatter and SensitiveDataFilter redacts secrets in logs and tracebacks.
 
 Covers:
-- Bot token, session string, cookie header, auth header, phone number are
-  redacted in the formatted output (including traceback text).
-- SanitizingFormatter.format() redacts exc_info tracebacks.
-- Existing SensitiveDataFilter patterns still work.
+- URLsafe base64 session strings (>=200 chars).
+- Cookie header redaction (full rest of line).
+- Cookie key-value redactions (bare and inside headers).
+- Phone numbers, bot tokens, api hash, auth headers.
+- Untouched lines: ordinary log lines, URLs <200 chars, 32-char job IDs.
 """
+import base64
 import logging
+import os
 import traceback
 import pytest
 
@@ -39,7 +42,7 @@ def _make_exc_record(msg: str, secret_in_exc: str) -> logging.LogRecord:
     return record
 
 
-# ── SanitizingFormatter tests ─────────────────────────────────────────────────
+# ── SanitizingFormatter and Pattern tests ─────────────────────────────────────
 
 class TestSanitizingFormatter:
 
@@ -54,27 +57,42 @@ class TestSanitizingFormatter:
         assert secret not in output
         assert "REDACTED" in output
 
-    def test_session_string_in_traceback_is_redacted(self):
-        """A long base64 session string in an exception message must be redacted."""
-        # 100-char base64-looking string
-        secret = "A" * 80 + "BBB="
-        record = _make_exc_record("auth error", secret)
-        output = self._fmt().format(record)
-        assert secret not in output
-        assert "REDACTED" in output
+    def test_session_string_random_200_trials(self):
+        """Build session string with base64.urlsafe_b64encode(os.urandom(263)).decode().rstrip('='). Repeat 200 times.
+        After sanitizing, no 20-character substring of the original may remain."""
+        for _ in range(200):
+            orig = base64.urlsafe_b64encode(os.urandom(263)).decode().rstrip("=")
+            sanitized = sanitize_string(f"session={orig}")
+            assert orig not in sanitized
+            # Check that no 20-character substring of orig remains in sanitized
+            for i in range(len(orig) - 20 + 1):
+                sub = orig[i:i + 20]
+                assert sub not in sanitized, f"Found 20-char leak '{sub}' in sanitized output: {sanitized}"
 
-    def test_cookie_header_is_redacted(self):
-        """Cookie: header value in a message is redacted."""
-        text = "Cookie: session=abc123xyz"
-        output = sanitize_string(text)
-        assert "abc123xyz" not in output
-        assert "REDACTED" in output
+    def test_cookie_header_leaks_neither_value(self):
+        """'Cookie: a=1; sessionid=SECRET; csrftoken=TOK' leaks neither value."""
+        text = "Cookie: a=1; sessionid=SECRET; csrftoken=TOK"
+        sanitized = sanitize_string(text)
+        assert "SECRET" not in sanitized
+        assert "TOK" not in sanitized
+        assert "REDACTED" in sanitized
+
+    def test_bare_cookie_kv_leaks_neither_value(self):
+        """The bare form 'sessionid=SECRET csrftoken=TOK' leaks neither value."""
+        text = "sessionid=SECRET csrftoken=TOK"
+        sanitized = sanitize_string(text)
+        assert "SECRET" not in sanitized
+        assert "TOK" not in sanitized
+        assert "sessionid=" in sanitized
+        assert "csrftoken=" in sanitized
+        assert "REDACTED" in sanitized
 
     def test_set_cookie_header_is_redacted(self):
-        """Set-Cookie: header value is redacted."""
+        """Set-Cookie: header value is redacted completely."""
         text = "Set-Cookie: auth_token=supersecret; Path=/"
         output = sanitize_string(text)
         assert "supersecret" not in output
+        assert "Path=/" not in output
         assert "REDACTED" in output
 
     def test_auth_header_bearer_redacted(self):
@@ -102,23 +120,29 @@ class TestSanitizingFormatter:
         """Short numeric strings (< 7 digits) are NOT redacted as phone numbers."""
         text = "retry attempt +3"
         output = sanitize_string(text)
-        # +3 should remain intact
         assert "+3" in output
 
-    def test_sanitizing_formatter_redacts_message(self):
-        """SanitizingFormatter redacts a bot token in the plain log message."""
-        token = "9876543210:ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZaaa"
-        record = logging.LogRecord(
-            name="test", level=logging.ERROR, pathname=__file__,
-            lineno=0, msg=f"token={token}", args=(), exc_info=None,
-        )
-        output = SanitizingFormatter('%(message)s').format(record)
-        assert token not in output
-        assert "REDACTED" in output
+    def test_ordinary_log_lines_unchanged(self):
+        """Ordinary log lines remain unchanged."""
+        text = "Downloading 5 files from Instagram for user 12345"
+        assert sanitize_string(text) == text
+
+    def test_urls_under_200_chars_unchanged(self):
+        """URLs under 200 characters are not treated as session strings."""
+        url = "https://instagram.com/p/C_abc123XYZ_xyz?igsh=MXZ5aW12ODZ4eQ=="
+        assert len(url) < 200
+        assert sanitize_string(url) == url
+
+    def test_32_character_job_id_unchanged(self):
+        """A 32-character job ID (non-hex or non-api_hash) is unchanged, except for existing api_hash rule if 32 hex chars."""
+        # 32-char uuid without hyphens contains non-hex or hyphenated uuid
+        job_id = "job_abcdefghijklmnopqrstuvwxyz12"
+        assert len(job_id) == 32
+        assert sanitize_string(job_id) == job_id
 
 
 class TestSensitiveDataFilterStillWorks:
-    """Ensure existing filter tests still pass after G2 changes."""
+    """Ensure existing filter tests still pass."""
 
     def test_bot_token_sanitized(self):
         token = "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"

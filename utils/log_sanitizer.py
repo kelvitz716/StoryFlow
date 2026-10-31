@@ -20,14 +20,19 @@ from typing import Pattern
 # ---------------------------------------------------------------------------
 
 _EXTRA_PATTERNS: dict[str, tuple[re.Pattern, str]] = {
-    # Telethon / Pyrogram base64 session string (long, ends without = padding often)
+    # Telethon / Pyrogram urlsafe base64 session string (200+ chars)
     'session_string': (
-        re.compile(r'(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?![A-Za-z0-9+/=])'),
+        re.compile(r'(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{200,}={0,2})(?![A-Za-z0-9_=-])'),
         '***REDACTED-SESSION***',
     ),
-    # Cookie: or Set-Cookie: header values
+    # Cookie key/value pattern redacting the value only
+    'cookie_kv': (
+        re.compile(r'(?i)\b(sessionid|sessionid_ss|csrftoken|ds_user_id|auth_token|ct0|sc_at|sc-a-nonce)(\s*=\s*|\t)[^;\s\'"]+'),
+        r'\1\2***REDACTED-COOKIE-VALUE***',
+    ),
+    # Cookie: or Set-Cookie: header values (redacts rest of line)
     'cookie_header': (
-        re.compile(r'(?i)((?:Set-)?Cookie\s*:\s*)\S+'),
+        re.compile(r'(?i)((?:Set-)?Cookie\s*:\s*).*'),
         r'\1***REDACTED-COOKIE***',
     ),
     # Authorization: Bearer / Basic / Token header
