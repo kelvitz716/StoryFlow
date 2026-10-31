@@ -313,6 +313,3 @@ class TestBlankEnvVarsDoNotRaise:
         }):
             # Must not raise on blank BACKLOG_*
             await handle_url(update, context, access_mgr, mock_queue)
-
-
-

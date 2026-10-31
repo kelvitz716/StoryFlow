@@ -252,4 +252,3 @@ class TestWatchdogLimits:
 
         assert result['success'] is True
         assert os.path.exists(os.path.join(str(job_dir), "file.mp4"))
-

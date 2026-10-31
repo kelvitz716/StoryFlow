@@ -1,4 +1,4 @@
-"""Gallery-dl wrapper for Instagram, TikTok, Twitter, and Facebook downloads."""
+"""Gallery-dl / yt-dlp wrapper covering 300+ gallery-dl sites and major video platforms."""
 
 import os
 import re
@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Dict, Optional, Callable
 from core.config import _env_int
+from core.user_prefs import get_user_quality, QUALITY_OPTIONS
 
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
@@ -51,6 +52,7 @@ def _mask_id(uid: Optional[str]) -> str:
 
 
 from downloaders.base import BaseDownloader
+from core.platform import YTDLP_DIRECT_PLATFORMS
 
 
 def _mask_cookie_filename(filename: Optional[str]) -> str:
@@ -108,9 +110,21 @@ class GalleryDLDownloader(BaseDownloader):
             job_output_path = os.path.join(self.output_path, job_id) if job_id else self.output_path
             os.makedirs(job_output_path, exist_ok=True)
 
-            # Get list of files before download (only in this job's folder)
+            # Snapshot files before any download attempt
             files_before = self._get_download_files(job_output_path)
-            
+            # ── yt-dlp-primary platforms (YouTube, Vimeo, Twitch, SoundCloud, etc.) ──
+            # gallery-dl has no extractor for these; go straight to yt-dlp.
+            if platform in YTDLP_DIRECT_PLATFORMS:
+                logging.info(f"▶️  {platform} is a video-primary platform — routing directly to yt-dlp")
+                quality_key = get_user_quality(user_id or '')
+                fmt_str, audio_only = QUALITY_OPTIONS[quality_key]
+                result = await self._download_with_ytdlp(
+                    url, platform, user_id, job_output_path, files_before,
+                    progress_callback=progress_callback,
+                    fmt=fmt_str, audio_only=audio_only
+                )
+                return result or {'success': False, 'error': 'yt-dlp returned no result', 'platform': platform}
+
             tried_cookie = None
 
             # 1. Try download without cookies first
@@ -155,7 +169,7 @@ class GalleryDLDownloader(BaseDownloader):
                     logging.info(f"📂 Found {len(files_after)} files in the job directory")
                     result['files'] = list(files_after)
                     return result
-                
+
                 logging.warning(f"⚠️ No files found after gallery-dl success in folder: {job_output_path}")
             
             # Check for partial success (files downloaded despite error)
@@ -212,19 +226,23 @@ class GalleryDLDownloader(BaseDownloader):
                     return result
                 
             # 3. If that fails too, retry with yt-dlp (which automatically uses cookies if available)
-            fallback_platforms = ["Facebook", "TikTok", "Twitter", "Snapchat", "Instagram", "Generic"]
-            if platform in fallback_platforms:
-                logging.info(f"🔄 Trying yt-dlp fallback for {platform}...")
-                fallback_result = await self._download_with_ytdlp(url, platform, user_id, job_output_path, files_before, progress_callback=progress_callback)
+            if platform != 'Snapchat':
+                logging.info(f"🔄 gallery-dl failed for {platform} — trying yt-dlp fallback...")
+                quality_key = get_user_quality(user_id or '')
+                fmt_str, audio_only = QUALITY_OPTIONS[quality_key]
+                fallback_result = await self._download_with_ytdlp(
+                    url, platform, user_id, job_output_path, files_before,
+                    progress_callback=progress_callback,
+                    fmt=fmt_str, audio_only=audio_only
+                )
                 if fallback_result and fallback_result['success']:
                     return fallback_result
                 elif fallback_result:
-                    # Return fallback error if we tried it
-                    logging.warning(f"⚠️ Fallback failed: {fallback_result.get('error')}")
+                    logging.warning(f"⚠️ yt-dlp fallback also failed: {fallback_result.get('error')}")
                     return fallback_result
-            
-            logging.error(f"❌ Download failed: {result.get('error') if result else 'Unknown error'}")
-            return result or {'success': False, 'error': 'Unknown failure', 'platform': platform}
+
+            logging.error(f"❌ Download failed for {platform}: {result.get('error') if result else 'Unknown error'}")
+            return result or {'success': False, 'error': 'Download failed', 'platform': platform}
 
                 
         except Exception as e:
@@ -236,7 +254,7 @@ class GalleryDLDownloader(BaseDownloader):
                 'platform': platform
             }
     
-    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None) -> Dict:
+    async def _download_with_ytdlp(self, url: str, platform: str, user_id: Optional[str], output_path: str, files_before: set, progress_callback: Optional[Callable] = None, fmt: Optional[str] = None, audio_only: bool = False) -> Dict:
         """
         Fallback download using yt-dlp for platforms where gallery-dl fails (Async).
         
@@ -247,6 +265,8 @@ class GalleryDLDownloader(BaseDownloader):
             output_path: Isolated output directory
             files_before: Set of files before request started
             progress_callback: Optional progress callback
+            fmt: yt-dlp format string (e.g. 'bestvideo+bestaudio/best')
+            audio_only: If True, extract audio as mp3 (-x --audio-format mp3)
             
         Returns:
             Dict with download result
@@ -258,11 +278,21 @@ class GalleryDLDownloader(BaseDownloader):
             command = [
                 'yt-dlp',
                 '--no-config',
+                '--newline',          # progress to stdout, one line per update
+                '--progress',         # ensure progress is shown
                 '-o', output_template,
                 '--no-warnings',
                 '--no-playlist',
                 '--max-filesize', f'{_MAX_FILE_SIZE_MB}m',
             ]
+
+            # Audio-only extraction
+            if audio_only:
+                command.extend(['-x', '--audio-format', 'mp3'])
+
+            # Format selection
+            if fmt:
+                command.extend(['-f', fmt])
             
             # Add cookies if available
             cookie_file = self._get_cookie_file(platform, user_id)
@@ -318,7 +348,9 @@ class GalleryDLDownloader(BaseDownloader):
                         'platform': platform
                     }
             else:
-                return result
+                res = dict(result)
+                res['platform'] = platform
+                return res
                 
         except asyncio.TimeoutError:
             return {

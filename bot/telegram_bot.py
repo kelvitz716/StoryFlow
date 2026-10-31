@@ -26,6 +26,7 @@ from auth.cookies import CookieManager
 from auth.access import AccessManager
 from core.stats import stats_manager
 
+from bot.menus import get_cancel_keyboard
 from bot.handlers import (
     handle_url, start, help_command, handle_document,
     handle_auth_input, get_auth_code, get_auth_password,
@@ -66,26 +67,51 @@ async def update_job_status(application: Application, job: DownloadJob):
         
         if job.status == JobStatus.QUEUED:
             pos = get_queue().get_queue_position(job.job_id)
+            keyboard = get_cancel_keyboard(job.job_id)
             request_edit(
                 status_msg,
-                f"⏳ *Queued* (Position: {pos})\nWaiting for available worker...", 
+                f"{emoji} *{job.platform} Download*\n"
+                f"⏳ *Status:* Queued (Position {pos})\n"
+                f"🕒 *Waiting for worker...*",
                 parse_mode='Markdown',
+                reply_markup=keyboard,
                 terminal=False
             )
             
         elif job.status == JobStatus.DOWNLOADING:
-            # Escape the message for safe Markdown rendering
-            msg = escape_markdown(job.message, version=1)
+            msg = job.message or ""
+            # Format percentage into progress bar if present
+            if "%" in msg:
+                import re
+                pct_match = re.search(r'(\d+(?:\.\d+)?%)', msg)
+                if pct_match:
+                    pct_str = pct_match.group(1)
+                    try:
+                        val = float(pct_str.replace('%', ''))
+                        filled = int(round(val / 10))
+                        bar = '█' * filled + '░' * (10 - filled)
+                        msg = f"Progress: `{bar}` {val:.0f}%"
+                    except Exception:
+                        pass
+            elif "Fetching media files..." not in msg and ("Downloading:" in msg or ".mp4" in msg or ".jpg" in msg):
+                msg = "Fetching media files..."
+
+            safe_msg = escape_markdown(msg, version=1) if msg else "Fetching media..."
             request_edit(
                 status_msg,
-                f"⬇️ *Downloading...*\n{emoji} {msg}",
+                f"{emoji} *{job.platform} Download*\n"
+                f"⬇️ *Status:* Downloading...\n"
+                f"⚡ {safe_msg}",
                 parse_mode='Markdown',
                 terminal=False
             )
             
         elif job.status == JobStatus.UPLOADING:
-            # Batch upload handles its own status updates
-            pass
+            await status_msg.edit_text(
+                f"{emoji} *{job.platform} Download*\n"
+                f"🚀 *Status:* Uploading to Telegram...",
+                parse_mode='Markdown'
+            )
             
         elif job.status == JobStatus.COMPLETED:
             stats_manager.increment_download(job.user_id, job.platform)
@@ -99,6 +125,10 @@ async def update_job_status(application: Application, job: DownloadJob):
                 parse_mode='Markdown',
                 terminal=True
             )
+            pop_job_message(job.job_id)
+
+        elif job.status == JobStatus.CANCELLED:
+            await status_msg.edit_text("❌ *Job Cancelled*", parse_mode='Markdown')
             pop_job_message(job.job_id)
                 
     except Exception as e:
@@ -132,7 +162,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         logging.warning(f"Telegram transient error ({type(exc).__name__}): {exc}")
     else:
         logging.exception(f"Unhandled exception in update handler: {exc}", exc_info=exc)
-
 
 def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     """Initialize and run the StoryFlow Telegram bot."""
@@ -197,11 +226,31 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     app.post_stop = post_stop
     app.bot_data['download_path'] = download_path
     
-    # Handlers
+    # Handler wrapper functions (async def wrappers preserve inspect.iscoroutinefunction
+    # and access dynamic variables like download_queue and mtproto_client at runtime)
     from bot.handlers import queue_command, handle_admin_input
-    app.add_handler(CommandHandler("start", lambda u, c: start(u, c, access_manager)))
-    app.add_handler(CommandHandler("help", lambda u, c: help_command(u, c, access_manager)))
-    app.add_handler(CommandHandler("queue", lambda u, c: queue_command(u, c, access_manager, download_queue)))
+
+    async def _start_wrapper(u, c):
+        await start(u, c, access_manager)
+
+    async def _help_wrapper(u, c):
+        await help_command(u, c, access_manager)
+
+    async def _queue_wrapper(u, c):
+        await queue_command(u, c, access_manager, download_queue)
+
+    async def _admin_input_wrapper(u, c):
+        await handle_admin_input(u, c, access_manager)
+
+    async def _document_wrapper(u, c):
+        await handle_document(u, c, cookie_manager, access_manager)
+
+    async def _url_wrapper(u, c):
+        await handle_url(u, c, access_manager, download_queue, mtproto_client, cookie_manager)
+
+    app.add_handler(CommandHandler("start", _start_wrapper))
+    app.add_handler(CommandHandler("help", _help_wrapper))
+    app.add_handler(CommandHandler("queue", _queue_wrapper))
     
     # Callback Query
     app.add_handler(CallbackQueryHandler(button_callback))
@@ -213,17 +262,17 @@ def run_telegram_bot(token: str, download_path: str, cookie_path: str) -> None:
     # Runs in group 0 before the URL handler so bare IDs/numbers are handled correctly.
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
-        lambda u, c: handle_admin_input(u, c, access_manager)
+        _admin_input_wrapper
     ), group=0)
 
     # Document handler for cookie uploads
-    app.add_handler(MessageHandler(filters.Document.ALL, lambda u, c: handle_document(u, c, cookie_manager, access_manager)))
+    app.add_handler(MessageHandler(filters.Document.ALL, _document_wrapper))
     
     # URL Handler (group 1 so admin handler gets first crack at group 0)
     # Matches any message containing an http/https URL (not just messages starting with one)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(r'https?://'),
-        lambda u, c: handle_url(u, c, access_manager, download_queue, mtproto_client)
+        _url_wrapper
     ), group=1)
     
     # Error handler (item 3)

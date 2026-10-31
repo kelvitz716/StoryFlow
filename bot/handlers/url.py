@@ -220,7 +220,7 @@ async def _register_backlog_link(msg, chat_id: str) -> None:
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                      access_manager: AccessManager, download_queue,
-                     mtproto_client=None) -> None:
+                     mtproto_client=None, cookie_manager=None) -> None:
     """Handle URL message."""
     # Determine update type
     def _get_update_attr(attr: str):
@@ -356,11 +356,21 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     for raw_url in urls:
         try:
-            url = await resolve_shortlink(raw_url)
+            url = (await resolve_shortlink(raw_url)) or raw_url
         except UnsafeRedirectError:
             logging.warning(f"handle_url: rejected unsafe/unresolvable redirect from {raw_url!r}")
             await msg.reply_text(
                 "⛔ *This link can't be downloaded.*",
+                parse_mode='Markdown'
+            )
+            continue
+
+        # Proactive check: TikTok LIVE streams are live broadcasts (not static videos)
+        if "tiktok.com" in url.lower() and ("/live" in url.lower() or "live.tiktok.com" in url.lower()):
+            await msg.reply_text(
+                "🔴 *TikTok Live Stream*\n\n"
+                "Live broadcasts cannot be downloaded as static videos. "
+                "Please share a link to a published TikTok video or reel.",
                 parse_mode='Markdown'
             )
             continue

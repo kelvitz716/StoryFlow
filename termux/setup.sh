@@ -58,7 +58,6 @@ chmod 700 "$REPO_DIR/sessions" "$REPO_DIR/cookies" "$REPO_DIR/data" "$HOME/logs/
 
 # Create .env securely if missing
 [ -f "$REPO_DIR/.env" ] || install -m 600 "$REPO_DIR/.env.example" "$REPO_DIR/.env"
-
 # Termux's sv-enable reads from $SVDIR (defaults to ~/.config/runit/sv).
 # Fall back to the env var if set, otherwise use the Termux default.
 RUNIT_SV_DIR="${SVDIR:-$HOME/.config/runit/sv}"

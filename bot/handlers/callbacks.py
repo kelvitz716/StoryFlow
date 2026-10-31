@@ -18,6 +18,8 @@ from bot.menus import (
     send_admin_menu,
     send_cookies_menu,
     send_delete_cookies_menu,
+    send_quality_menu,
+    QUALITY_LABELS,
     get_back_button
 )
 
@@ -194,3 +196,28 @@ async def button_callback(
             "twitter": "🐦 *Twitter/X Tips*\n\nNo cookies required usually."
         }
         await query.edit_message_text(tips.get(platform, "No tips available."), parse_mode='Markdown', reply_markup=get_back_button("menu_help"))
+
+    # Quality selection
+    elif data == 'menu_quality':
+        await send_quality_menu(query, user_id, is_new_message=False)
+    elif data.startswith('quality_'):
+        key = data.removeprefix('quality_')
+        from core.user_prefs import set_user_quality
+        if set_user_quality(user_id, key):
+            label = QUALITY_LABELS.get(key, key)
+            await query.answer(f'Quality set to {label}', show_alert=False)
+            await send_quality_menu(query, user_id, is_new_message=False)
+        else:
+            await query.answer('Invalid quality option', show_alert=True)
+
+    # Cancel a queued job
+    elif data.startswith('cancel_job_'):
+        job_id = data.removeprefix('cancel_job_')
+        if download_queue:
+            cancelled = await download_queue.cancel_job(job_id, user_id)
+            if cancelled:
+                await query.edit_message_text('✅ Job cancelled.')
+            else:
+                await query.edit_message_text('⚠️ Could not cancel — job may already be running or completed.')
+        else:
+            await query.edit_message_text('⚠️ Queue not active.')

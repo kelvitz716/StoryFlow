@@ -18,7 +18,7 @@ import logging
 import asyncio
 from urllib.parse import urlparse, urljoin
 import requests
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 from core.rate_limiter import RateLimiter
 from core.config import _env_int
@@ -154,6 +154,7 @@ class SnapchatDownloader(BaseDownloader):
         url: str,
         user_id: Optional[str] = None,
         job_id: Optional[str] = None,
+        progress_callback: Optional[Callable] = None,
     ) -> Dict:
         """Queue-compatible async entry point.
 
@@ -187,7 +188,7 @@ class SnapchatDownloader(BaseDownloader):
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, self._download_stories, username, job_id, mode
+            None, self._download_stories, username, job_id, mode, progress_callback
         )
 
     # ------------------------------------------------------------------
@@ -195,7 +196,8 @@ class SnapchatDownloader(BaseDownloader):
     # ------------------------------------------------------------------
 
     def _download_stories(
-        self, username: str, job_id: Optional[str] = None, mode: str = "both"
+        self, username: str, job_id: Optional[str] = None, mode: str = "both",
+        progress_callback: Optional[Callable] = None
     ) -> Dict:
         """Scrape story.snapchat.com and download all media files.
 
@@ -260,6 +262,12 @@ class SnapchatDownloader(BaseDownloader):
                         "message": "Download stopped: limit reached",
                         "limit_reached": True,
                     }
+
+                if progress_callback:
+                    try:
+                        progress_callback(f"Downloading snap {i}/{count}")
+                    except Exception:
+                        pass
 
                 media_url  = item.get("mediaUrl")
                 media_type = item.get("mediaType", 0)   # 0=image, 1=video

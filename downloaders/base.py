@@ -219,7 +219,6 @@ class BaseDownloader:
                         logging.debug(f"Watchdog error: {exc}")
 
                 watchdog_task = asyncio.create_task(_watchdog())
-
                 stdout_lines: deque[str] = deque(maxlen=_STDOUT_MAX_LINES)
                 stdout_bytes = 0
 
@@ -257,7 +256,7 @@ class BaseDownloader:
                                         except Exception:
                                             pass
 
-                                    # gallery-dl style (usually just filenames)
+                                    # gallery-dl style (usually file paths)
                                     elif line_text.startswith('#'):
                                         pass
                                     elif "." in line_text and ("/" in line_text or "\\" in line_text):
@@ -374,7 +373,6 @@ class BaseDownloader:
                     except asyncio.CancelledError:
                         pass
 
-                logging.warning(f"⚠️ Attempt {attempt}/{max_attempts} failed for {process_name}: {error_msg}")
                 if stderr_text:
                     logging.debug(f"STDERR ({process_name}): {stderr_text}")
 
@@ -386,6 +384,7 @@ class BaseDownloader:
                     or bool(re.search(r'login|log in|logged-in|accounts/login|audience|restrict|\bage\b|age-', stderr_lower))
                     or 'use --cookies' in stderr_lower
                     or bool(re.search(r'(?:http\s*(?:error\s*)?|\b)401\b', stderr_lower))
+                    or 'login required' in stderr_lower
                     or 'sign in to confirm' in stderr_lower
                 )
                 if is_auth_error:
