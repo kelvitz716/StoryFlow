@@ -11,7 +11,7 @@ from core.database import db
 from core.config import _env_int, _env_float
 from downloaders.registry import DownloaderRegistry
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Callable
+from typing import Any, Dict, Optional, Callable
 from enum import Enum
 from datetime import datetime
 import uuid
