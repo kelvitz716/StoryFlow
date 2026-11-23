@@ -254,8 +254,6 @@ _GALLERY_DL_DOMAINS: dict[str, str] = {
     # X
     "xasiat.com": "Xasiat",
     "xfolio.jp": "Xfolio",
-    "xhamster.com": "xHamster",
-    "xvideos.com": "XVideos",
     "xbooru.com": "Xbooru",
     # Y
     "yande.re": "yande.re",
@@ -326,6 +324,8 @@ _YTDLP_DOMAINS: dict[str, str] = {
     "clipe.tv": "Clipe.TV",
     "vlive.tv": "VLive",
     "ok.ru": "OK.ru",
+    "xvideos.com": "XVideos",
+    "xhamster.com": "xHamster",
     # Music / Audio
     "soundcloud.com": "SoundCloud",
     "on.soundcloud.com": "SoundCloud",

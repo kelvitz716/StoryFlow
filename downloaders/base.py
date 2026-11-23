@@ -376,6 +376,16 @@ class BaseDownloader:
                 if stderr_text:
                     logging.debug(f"STDERR ({process_name}): {stderr_text}")
 
+                if isinstance(e, TimeoutError):
+                    logging.warning(f"⚠️ {process_name}: {error_msg}")
+                    return {
+                        'success': False,
+                        'error': f'Download timed out (exceeded {_DOWNLOAD_TIMEOUT}s limit)',
+                        'details': f'The download took longer than {_DOWNLOAD_TIMEOUT}s. Try selecting a lower resolution or retry.',
+                        'platform': process_name,
+                        'timeout': True,
+                    }
+
                 # Check if it's an authentication error
                 # gallery-dl: only exit code 16 (AuthRequired/AuthenticationError/AuthorizationError)
                 stderr_lower = stderr_text.lower()

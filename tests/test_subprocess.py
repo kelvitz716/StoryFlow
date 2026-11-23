@@ -252,3 +252,22 @@ class TestWatchdogLimits:
 
         assert result['success'] is True
         assert os.path.exists(os.path.join(str(job_dir), "file.mp4"))
+
+    @pytest.mark.asyncio
+    async def test_download_timeout_returns_clear_message(self, monkeypatch):
+        """When wall-clock timeout expires, error must clearly report timeout instead of code ?."""
+        import downloaders.base as base_module
+        monkeypatch.setattr(base_module, "_DOWNLOAD_TIMEOUT", 1)
+
+        cmd = [sys.executable, "-c", "import time; time.sleep(5)"]
+        dl = ConcreteDownloader(output_path="/tmp")
+        result = await dl._execute_with_retry(
+            cmd,
+            process_name="test_timeout",
+            max_attempts=1,
+        )
+
+        assert result['success'] is False
+        assert result['timeout'] is True
+        assert "Download timed out" in result['error']
+        assert "limit" in result['error']
