@@ -7,6 +7,7 @@ from telegram import Update, InputMediaPhoto, InputMediaVideo, InputMediaDocumen
 from telegram.error import RetryAfter, NetworkError, TimedOut, BadRequest
 
 from bot.edit_gate import request_edit, send_gate_open
+from utils.video_split import prepare_files_for_upload
 
 
 async def safe_edit_text(
@@ -25,8 +26,10 @@ async def batch_upload_media(update: Update, files: List[str], status_msg, mtpro
     """
     Upload media files in batches using Telegram media groups.
     
-    Supports >50MB files via MTProto client if configured.
+    Supports >50MB files via MTProto client if configured, and automatically
+    splits oversized video files into <= MAX_UPLOAD_PART_MB parts.
     """
+    files = await prepare_files_for_upload(files)
     total_files = len(files)
     batch_size = 10  # Telegram max for media groups
     batches = [files[i:i + batch_size] for i in range(0, len(files), batch_size)]
