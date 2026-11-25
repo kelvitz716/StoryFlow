@@ -14,6 +14,21 @@ _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
 # Maximum files downloaded per job (G4)
 _MAX_FILES_PER_JOB = _env_int('MAX_FILES_PER_JOB', 500, 1, 10000)
 
+# Default subprocess wall-clock timeout (seconds) — matches DOWNLOAD_TIMEOUT_SECONDS in base.py.
+_DEFAULT_TIMEOUT = _env_int('DOWNLOAD_TIMEOUT_SECONDS', 600, 10, 86400)
+
+# Per-platform timeout overrides for long-form video platforms.
+# XVIDEOS_TIMEOUT_SECONDS / XHAMSTER_TIMEOUT_SECONDS default to 2 hours.
+_XVIDEOS_TIMEOUT = _env_int('XVIDEOS_TIMEOUT_SECONDS', 7200, 60, 86400)
+_XHAMSTER_TIMEOUT = _env_int('XHAMSTER_TIMEOUT_SECONDS', 7200, 60, 86400)
+
+# Map platform name → timeout override (seconds).  Platforms absent from this
+# dict fall back to _DEFAULT_TIMEOUT (i.e. DOWNLOAD_TIMEOUT_SECONDS).
+_PLATFORM_TIMEOUT: dict[str, int] = {
+    'XVideos': _XVIDEOS_TIMEOUT,
+    'xHamster': _XHAMSTER_TIMEOUT,
+}
+
 # Admin cookie fallback is opt-in (item 8).
 # Default is disabled to prevent inadvertently sharing admin credentials.
 _ALLOW_ADMIN_COOKIE_FALLBACK = os.getenv('ALLOW_ADMIN_COOKIE_FALLBACK', 'false').lower() == 'true'
@@ -283,13 +298,21 @@ class GalleryDLDownloader(BaseDownloader):
 
             # URL must come after '--' to prevent argument injection
             command.extend(['--', url])
-            
+
+            # Resolve the per-platform timeout; fall back to the global default.
+            platform_timeout = _PLATFORM_TIMEOUT.get(platform, _DEFAULT_TIMEOUT)
+
             # Run yt-dlp asynchronously using the shared execution method
             # This handles streaming output and progress parsing
-            logging.info(f"📥 Downloading {platform} content via yt-dlp...")
-            
+            logging.info(f"📥 Downloading {platform} content via yt-dlp... (timeout: {platform_timeout}s)")
+
             # Re-use _execute_with_retry since it now supports streaming and progress
-            result = await self._execute_with_retry(command, progress_callback=progress_callback, job_dir=output_path)
+            result = await self._execute_with_retry(
+                command,
+                progress_callback=progress_callback,
+                job_dir=output_path,
+                timeout=platform_timeout,
+            )
             
             files_after = self._get_download_files(output_path)
             new_files = [f for f in files_after if f not in files_before]

@@ -125,6 +125,7 @@ class BaseDownloader:
         progress_callback: Optional[Callable] = None,
         job_dir: Optional[str] = None,
         check_interval: float = 2.0,
+        timeout: Optional[int] = None,
     ) -> Dict:
         """
         Execute command with unified async retry logic, concurrent stderr drain,
@@ -140,12 +141,13 @@ class BaseDownloader:
         - Watchdog task: every 2s checks cumulative file size and file count in
           job_dir. If MAX_JOB_SIZE_MB or MAX_FILES_PER_JOB is exceeded, kills
           process group, cleans partial files, and terminates without retry.
-        - Wall-clock timeout (DOWNLOAD_TIMEOUT_SECONDS, default 600 s): on
-          expiry the whole process group is killed and the drain task is
-          cancelled.
+        - Wall-clock timeout (DOWNLOAD_TIMEOUT_SECONDS, default 600 s, or the
+          per-call `timeout` kwarg for platform-specific overrides): on expiry
+          the whole process group is killed and the drain task is cancelled.
         - Raw stderr is NEVER returned in result dicts; only generic messages
           are surfaced to callers. Full stderr is logged at DEBUG level.
         """
+        effective_timeout = timeout if timeout is not None else _DOWNLOAD_TIMEOUT
         last_stderr_text = ""
         target_dir = job_dir or self.output_path
         max_job_bytes = _MAX_JOB_SIZE_MB * 1024 * 1024
@@ -223,7 +225,7 @@ class BaseDownloader:
                 stdout_bytes = 0
 
                 try:
-                    async with asyncio.timeout(_DOWNLOAD_TIMEOUT):
+                    async with asyncio.timeout(effective_timeout):
                         # Stream stdout line-by-line for progress callbacks
                         while True:
                             try:
@@ -307,7 +309,7 @@ class BaseDownloader:
                             await stderr_task
                         except asyncio.CancelledError:
                             pass
-                    raise TimeoutError(f"Process exceeded {_DOWNLOAD_TIMEOUT}s wall-clock timeout")
+                    raise TimeoutError(f"Process exceeded {effective_timeout}s wall-clock timeout")
                 finally:
                     if watchdog_task and not watchdog_task.done():
                         watchdog_task.cancel()
@@ -380,8 +382,8 @@ class BaseDownloader:
                     logging.warning(f"⚠️ {process_name}: {error_msg}")
                     return {
                         'success': False,
-                        'error': f'Download timed out (exceeded {_DOWNLOAD_TIMEOUT}s limit)',
-                        'details': f'The download took longer than {_DOWNLOAD_TIMEOUT}s. Try selecting a lower resolution or retry.',
+                        'error': f'Download timed out (exceeded {effective_timeout}s limit)',
+                        'details': f'The download took longer than {effective_timeout}s. Try selecting a lower resolution or retry.',
                         'platform': process_name,
                         'timeout': True,
                     }
