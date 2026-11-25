@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Dict, Optional, Callable
 from core.config import _env_int
-from core.user_prefs import get_user_quality, QUALITY_OPTIONS
+from core.user_prefs import get_effective_quality, QUALITY_OPTIONS
 
 # Max file size limit from env (applied to both gallery-dl and yt-dlp)
 _MAX_FILE_SIZE_MB = _env_int('MAX_FILE_SIZE_MB', 500, 1, 10000)
@@ -112,7 +112,7 @@ class GalleryDLDownloader(BaseDownloader):
             # gallery-dl has no extractor for these; go straight to yt-dlp.
             if platform in YTDLP_DIRECT_PLATFORMS:
                 logging.info(f"▶️  {platform} is a video-primary platform — routing directly to yt-dlp")
-                quality_key = get_user_quality(user_id or '')
+                quality_key = get_effective_quality(user_id or '', platform)
                 fmt_str, audio_only = QUALITY_OPTIONS[quality_key]
                 result = await self._download_with_ytdlp(
                     url, platform, user_id, job_output_path, files_before,
@@ -224,7 +224,7 @@ class GalleryDLDownloader(BaseDownloader):
             # 3. If that fails too, retry with yt-dlp (which automatically uses cookies if available)
             if platform != 'Snapchat':
                 logging.info(f"🔄 gallery-dl failed for {platform} — trying yt-dlp fallback...")
-                quality_key = get_user_quality(user_id or '')
+                quality_key = get_effective_quality(user_id or '', platform)
                 fmt_str, audio_only = QUALITY_OPTIONS[quality_key]
                 fallback_result = await self._download_with_ytdlp(
                     url, platform, user_id, job_output_path, files_before,

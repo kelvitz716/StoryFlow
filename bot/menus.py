@@ -207,10 +207,10 @@ async def send_delete_cookies_menu(target, is_new_message: bool = False):
 
 
 async def send_quality_menu(target, user_id: str, is_new_message: bool = False):
-    """Send or edit the quality selection menu."""
+    """Send or edit the quality selection menu (global default)."""
     from core.user_prefs import get_user_quality, QUALITY_OPTIONS
     current = get_user_quality(user_id)
-    lines = ['🋺 *Download Quality*\n', 'Choose the quality for video downloads (yt-dlp).\n']
+    lines = ['🎬 *Download Quality*\n', 'Global default for all platforms.\n']
     for key, label in QUALITY_LABELS.items():
         tick = '✅' if key == current else '⬜'
         lines.append(f'{tick} {label}')
@@ -221,9 +221,89 @@ async def send_quality_menu(target, user_id: str, is_new_message: bool = False):
         [InlineKeyboardButton('📺 720p',  callback_data='quality_720p'),
          InlineKeyboardButton('📱 480p',  callback_data='quality_480p')],
         [InlineKeyboardButton('🎵 Audio only', callback_data='quality_audio')],
+        [InlineKeyboardButton('🔧 Per-Platform Overrides', callback_data='quality_platform_menu')],
         [InlineKeyboardButton('⬅️ Main Menu', callback_data='menu_main')],
     ])
     if is_new_message:
         await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
     else:
         await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+
+# Platforms that support per-platform quality overrides (yt-dlp routed)
+PLATFORM_QUALITY_TARGETS = [
+    ('XVideos',  '🔞'),
+    ('xHamster', '🔞'),
+    ('YouTube',  '▶️'),
+    ('Twitter',  '🐦'),
+    ('Reddit',   '🤖'),
+    ('TikTok',   '🎵'),
+    ('Instagram','📸'),
+    ('Facebook', '📘'),
+]
+
+
+async def send_platform_quality_menu(target, user_id: str, is_new_message: bool = False):
+    """Show all per-platform quality overrides and let the user pick one to configure."""
+    from core.user_prefs import get_all_platform_overrides
+    overrides = get_all_platform_overrides(user_id)
+
+    lines = ['🔧 *Per-Platform Quality*\n',
+             'Override quality for specific platforms.\n',
+             'Platform-specific setting takes priority over the global default.\n']
+    for platform, emoji in PLATFORM_QUALITY_TARGETS:
+        q = overrides.get(platform)
+        label = QUALITY_LABELS.get(q, q) if q else '_(global default)_'
+        lines.append(f'{emoji} *{platform}*: {label}')
+
+    text = '\n'.join(lines)
+    buttons = []
+    row = []
+    for i, (platform, emoji) in enumerate(PLATFORM_QUALITY_TARGETS):
+        row.append(InlineKeyboardButton(
+            f'{emoji} {platform}', callback_data=f'qplat_pick_{platform}'
+        ))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton('⬅️ Quality', callback_data='menu_quality')])
+
+    keyboard = InlineKeyboardMarkup(buttons)
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+
+
+async def send_platform_quality_picker(target, user_id: str, platform: str, is_new_message: bool = False):
+    """Quality picker for a specific platform."""
+    from core.user_prefs import get_platform_quality
+    current = get_platform_quality(user_id, platform)
+    emoji = next((e for p, e in PLATFORM_QUALITY_TARGETS if p == platform), '🎬')
+
+    lines = [f'{emoji} *{platform} Quality*\n',
+             f'Override quality just for {platform}.\n']
+    for key, label in QUALITY_LABELS.items():
+        tick = '✅' if key == current else '⬜'
+        lines.append(f'{tick} {label}')
+    if not current:
+        lines.append('✅ _(global default)_')
+
+    text = '\n'.join(lines)
+    buttons = [
+        [InlineKeyboardButton('🔝 Best',  callback_data=f'qplat_set_{platform}_best'),
+         InlineKeyboardButton('🎥 1080p', callback_data=f'qplat_set_{platform}_1080p')],
+        [InlineKeyboardButton('📺 720p',  callback_data=f'qplat_set_{platform}_720p'),
+         InlineKeyboardButton('📱 480p',  callback_data=f'qplat_set_{platform}_480p')],
+        [InlineKeyboardButton('🎵 Audio only', callback_data=f'qplat_set_{platform}_audio')],
+        [InlineKeyboardButton('🔄 Use Global Default', callback_data=f'qplat_clear_{platform}')],
+        [InlineKeyboardButton('⬅️ Per-Platform', callback_data='quality_platform_menu')],
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
+    if is_new_message:
+        await target.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await target.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+

@@ -20,6 +20,8 @@ from bot.menus import (
     send_cookies_menu,
     send_delete_cookies_menu,
     send_quality_menu,
+    send_platform_quality_menu,
+    send_platform_quality_picker,
     QUALITY_LABELS,
     get_back_button
 )
@@ -251,6 +253,32 @@ async def button_callback(
             await send_quality_menu(query, user_id, is_new_message=False)
         else:
             await query.answer('Invalid quality option', show_alert=True)
+
+    # Per-platform quality overrides (Option B)
+    elif data == 'quality_platform_menu':
+        await send_platform_quality_menu(query, user_id, is_new_message=False)
+    elif data.startswith('qplat_pick_'):
+        platform = data.removeprefix('qplat_pick_')
+        await send_platform_quality_picker(query, user_id, platform, is_new_message=False)
+    elif data.startswith('qplat_set_'):
+        # format: qplat_set_<Platform>_<quality>
+        rest = data.removeprefix('qplat_set_')
+        # quality key is the last segment; platform may contain underscores
+        *plat_parts, quality_key = rest.rsplit('_', 1)
+        platform = '_'.join(plat_parts)
+        from core.user_prefs import set_platform_quality
+        if set_platform_quality(user_id, platform, quality_key):
+            label = QUALITY_LABELS.get(quality_key, quality_key)
+            await query.answer(f'{platform} quality set to {label}', show_alert=False)
+            await send_platform_quality_picker(query, user_id, platform, is_new_message=False)
+        else:
+            await query.answer('Invalid quality option', show_alert=True)
+    elif data.startswith('qplat_clear_'):
+        platform = data.removeprefix('qplat_clear_')
+        from core.user_prefs import clear_platform_quality
+        clear_platform_quality(user_id, platform)
+        await query.answer(f'{platform} will now use your global default', show_alert=False)
+        await send_platform_quality_picker(query, user_id, platform, is_new_message=False)
 
     # Cancel a queued job
     elif data.startswith('cancel_job_'):
