@@ -6,6 +6,10 @@ import glob
 import stat
 import logging
 from typing import List
+from dotenv import load_dotenv
+
+# Ensure .env is loaded before any module reads environment variables via _env_int / _env_float.
+load_dotenv()
 
 
 def _env_int(name: str, default: int, lo: int, hi: int) -> int:

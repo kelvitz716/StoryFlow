@@ -271,6 +271,7 @@ class GalleryDLDownloader(BaseDownloader):
             # Build yt-dlp command
             # Use specific directory based on platform or direct output_path
             output_template = os.path.join(output_path, '%(id)s.%(ext)s')
+            concurrent_frags = _env_int('YTDLP_CONCURRENT_FRAGMENTS', 4, 1, 16)
             command = [
                 'yt-dlp',
                 '--no-config',
@@ -279,6 +280,7 @@ class GalleryDLDownloader(BaseDownloader):
                 '-o', output_template,
                 '--no-warnings',
                 '--no-playlist',
+                '--concurrent-fragments', str(concurrent_frags),
                 '--max-filesize', f'{_MAX_FILE_SIZE_MB}m',
             ]
 
