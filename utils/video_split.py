@@ -118,6 +118,10 @@ async def split_video_file(
         '-map', '0',
         '-f', 'segment',
         '-segment_time', str(segment_time),
+        '-segment_format', 'mp4',
+        # faststart moves each part's moov atom to the front so Telegram can
+        # play the file inline without waiting for the full download.
+        '-movflags', '+faststart+frag_keyframe',
         '-reset_timestamps', '1',
         output_pattern,
     ]

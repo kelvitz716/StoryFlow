@@ -282,6 +282,13 @@ class GalleryDLDownloader(BaseDownloader):
                 '--no-playlist',
                 '--concurrent-fragments', str(concurrent_frags),
                 '--max-filesize', f'{_MAX_FILE_SIZE_MB}m',
+                # Force MP4 container so Telegram can play the video inline.
+                # Without this yt-dlp may output MKV when merging streams.
+                '--merge-output-format', 'mp4',
+                # faststart moves the moov atom to the front of the MP4 file
+                # so Telegram (and other players) can start playing before the
+                # entire file is downloaded.  This is a no-op for non-video.
+                '--postprocessor-args', 'ffmpeg:-movflags +faststart',
             ]
 
             # Audio-only extraction
