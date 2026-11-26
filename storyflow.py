@@ -12,6 +12,10 @@ import sys
 import logging
 from dotenv import load_dotenv
 
+# Load .env before importing internal modules so module-level _env_int() /
+# os.getenv() configuration (timeouts, size caps, etc.) sees .env values.
+load_dotenv()
+
 from core.platform import identify_platform, extract_snapchat_username
 from core.config import _env_int, _env_float, _validate_admin_ids, _startup_permissions
 from downloaders.snapchat import SnapchatDownloader
